@@ -6,7 +6,7 @@ It defines commands, style expectations, and workflow constraints so changes sta
 correct, readable, and aligned with project goals.
 
 ## Scope And Priorities
-- Project: `jaxley-features` (library for electrophysiological feature functions)
+- Project: `jaxley-ephys` (library for electrophysiological feature functions)
 - Runtime library should **not** depend on AllenSDK
 - AllenSDK is allowed in tests/dev tooling only
 - Focus on maintainable, minimal, explicit implementations
@@ -28,7 +28,7 @@ correct, readable, and aligned with project goals.
 
 ## Current Repository Reality
 - Package metadata: `pyproject.toml`
-- Source package currently minimal: `jaxley-features/__init__.py`
+- Source package currently minimal: `jaxley_ephys/__init__.py`
 - Allen reference code vendored under `tests/allen_ephys/`
 - Allen tests under `tests/allen_ephys_tests/`
 - No Cursor/Copilot instruction files detected:
@@ -56,7 +56,7 @@ This project currently has no explicit build backend workflow configured.
 - Editable install
   - `uv pip install -e .`
 - Import smoke test
-  - `uv run python -c "import importlib; importlib.import_module('jaxley_features')"`
+  - `uv run python -c "import importlib; importlib.import_module('jaxley_ephys')"`
 
 If a build backend is added later:
 - `uv run python -m build`

@@ -1,6 +1,6 @@
 # Implementation Plan
 
-This file is the canonical execution plan for `jaxley-features`.
+This file is the canonical execution plan for `jaxley-ephys`.
 
 ## Working Rules
 - Work on exactly one subgoal at a time.
@@ -79,8 +79,8 @@ Exit criteria:
 ## Subgoal 5 - Implement JAX feature primitives and sweep-level features
 Goal: Build clean, functional JAX-first sweep feature functions with parity checks.
 
-- [ ] Create runtime package layout under `jaxley_features/` (underscore naming)
-- [ ] Add `jaxley_features/features/primitives/` modules (dV/dt, spike detection, thresholds, troughs, ISIs)
+- [ ] Create runtime package layout under `jaxley_ephys/` (underscore naming)
+- [ ] Add `jaxley_ephys/features/primitives/` modules (dV/dt, spike detection, thresholds, troughs, ISIs)
 - [ ] Define explicit function signatures:
   - sweep level: `v[T]`, `t[T]`, optional `i[T]`, optional `precomputed`
 - [ ] Implement long-square sweep features first
