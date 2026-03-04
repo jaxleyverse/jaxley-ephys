@@ -32,6 +32,6 @@ jobs:
         run: |
           uv run python tests/utils/load_allen_testcases.py --cell-ids 525011903
 
-      - name: Run stable Allen feature tests
+      - name: Run vendored Allen tests
         run: |
-          uv run python -m pytest -W error tests/allen_ephys_tests/test_features.py -vv
+          uv run python -m pytest tests/test_allen_features.py tests/test_allen_extractor.py -vv

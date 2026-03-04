@@ -67,11 +67,11 @@ Prefer `python -m pytest` invocations.
 - Run all tests
   - `uv run python -m pytest`
 - Run Allen vendored tests only
-  - `uv run python -m pytest tests/allen_ephys_tests`
+  - `uv run python -m pytest tests/test_allen_features.py tests/test_allen_extractor.py`
 - Run single test file
-  - `uv run python -m pytest tests/allen_ephys_tests/test_features.py`
+  - `uv run python -m pytest tests/test_allen_features.py`
 - Run single test function
-  - `uv run python -m pytest tests/allen_ephys_tests/test_features.py::test_detect_two_spikes`
+  - `uv run python -m pytest tests/test_allen_features.py::test_detect_two_spikes`
 - Run by keyword
   - `uv run python -m pytest -k "threshold or trough"`
 - Stop on first failure
@@ -82,8 +82,8 @@ Prefer `python -m pytest` invocations.
   - `uv run python -m pytest -W error`
 
 Single-test examples expected during development:
-- `uv run python -m pytest tests/allen_ephys_tests/test_extractor.py::test_extractor_on_variable_time_step -vv`
-- `uv run python -m pytest tests/allen_ephys_tests/test_features.py::test_width_calculation -vv`
+- `uv run python -m pytest tests/test_allen_extractor.py::test_extractor_on_variable_time_step -vv`
+- `uv run python -m pytest tests/test_allen_features.py::test_width_calculation -vv`
 
 ## Planned Testcase Cache Workflow
 Planned cache location:

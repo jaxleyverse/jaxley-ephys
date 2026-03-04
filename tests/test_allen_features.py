@@ -34,9 +34,10 @@
 # POSSIBILITY OF SUCH DAMAGE.
 #
 import pytest
-import allensdk.ephys.ephys_features as ft
+import tests.allen_ephys.ephys_features as ft
 import numpy as np
 import os
+
 path = os.path.dirname(__file__)
 
 
@@ -77,7 +78,7 @@ def test_fixed_dt():
     assert ft.has_fixed_dt(t)
 
     # Change the first time point to make time steps inconsistent
-    t[0] -= 3.
+    t[0] -= 3.0
     assert not ft.has_fixed_dt(t)
 
 
@@ -157,7 +158,9 @@ def test_upstrokes():
     peaks = np.array([812, 3478])
 
     expected_upstrokes = np.array([778, 3440])
-    assert np.allclose(ft.find_upstroke_indexes(v, t, spikes, peaks), expected_upstrokes)
+    assert np.allclose(
+        ft.find_upstroke_indexes(v, t, spikes, peaks), expected_upstrokes
+    )
 
 
 def test_thresholds():
@@ -167,7 +170,9 @@ def test_thresholds():
     upstrokes = np.array([778, 3440])
 
     expected_thresholds = np.array([725, 3382])
-    assert np.allclose(ft.refine_threshold_indexes(v, t, upstrokes), expected_thresholds)
+    assert np.allclose(
+        ft.refine_threshold_indexes(v, t, upstrokes), expected_thresholds
+    )
 
 
 def test_thresholds_cannot_find_target():
@@ -177,7 +182,9 @@ def test_thresholds_cannot_find_target():
     upstrokes = np.array([778, 3440])
 
     expected = np.array([0, 778])
-    assert np.allclose(ft.refine_threshold_indexes(v, t, upstrokes, thresh_frac=-5.0), expected)
+    assert np.allclose(
+        ft.refine_threshold_indexes(v, t, upstrokes, thresh_frac=-5.0), expected
+    )
 
 
 def test_check_spikes_and_peaks():
@@ -187,7 +194,9 @@ def test_check_spikes_and_peaks():
     peaks = np.array([10, 15])
     upstrokes = np.array([3, 13])
 
-    new_spikes, new_peaks, new_upstrokes, clipped = ft.check_thresholds_and_peaks(v, t, spikes, peaks, upstrokes)
+    new_spikes, new_peaks, new_upstrokes, clipped = ft.check_thresholds_and_peaks(
+        v, t, spikes, peaks, upstrokes
+    )
     assert np.allclose(new_spikes, spikes[:-1])
     assert np.allclose(new_peaks, peaks[1:])
 
@@ -211,8 +220,9 @@ def test_troughs_with_peak_at_end():
     peaks = np.array([812, 3478])
     clipped = np.array([False, True])
 
-    troughs = ft.find_trough_indexes(v[:peaks[-1]], t[:peaks[-1]],
-                                     spikes, peaks, clipped=clipped)
+    troughs = ft.find_trough_indexes(
+        v[: peaks[-1]], t[: peaks[-1]], spikes, peaks, clipped=clipped
+    )
     assert np.isnan(troughs[-1])
 
 
@@ -224,7 +234,9 @@ def test_downstrokes():
     troughs = np.array([1089, 3741])
 
     expected_downstrokes = np.array([862, 3532])
-    assert np.allclose(ft.find_downstroke_indexes(v, t, peaks, troughs), expected_downstrokes)
+    assert np.allclose(
+        ft.find_downstroke_indexes(v, t, peaks, troughs), expected_downstrokes
+    )
 
 
 def test_downstrokes_too_many_troughs():

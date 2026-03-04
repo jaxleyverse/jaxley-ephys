@@ -37,9 +37,9 @@ Goal: Ensure vendored Allen feature extraction executes with current environment
 
 - [x] Ensure environment setup commands work (`uv sync`, dev deps, `pytest`)
 - [x] Run Allen vendored tests:
-  - `uv run python -m pytest tests/allen_ephys_tests`
+  - `uv run python -m pytest tests/test_allen_features.py tests/test_allen_extractor.py`
 - [x] Run same test suite with warnings elevated:
-  - `uv run python -m pytest -W error tests/allen_ephys_tests`
+  - `uv run python -m pytest -W error tests/test_allen_features.py tests/test_allen_extractor.py`
 - [x] Capture failures/warnings due to NumPy/SciPy/API changes
 - [x] Apply minimal compatibility fixes to tests-side Allen code if required
 - [x] Re-run targeted failing tests until stable
@@ -159,3 +159,4 @@ Exit criteria:
 - 2026-03-04: Subgoal 1 hardening: loader now supports `--manifest-file` and defaults to `<output-dir>/cell_types_manifest.json` so AllenSDK cache stays under `tests/data`. Added CI workflow at `.github/workflows/ci.yml` with cache generation smoke test and stable Allen feature tests.
 - 2026-03-04: Subgoal 1 hardening: loader now skips existing per-specimen cache files by default and fetches only missing specimens; added `--force` to regenerate. Simplified CI to run loader without forcing redownloads.
 - 2026-03-03: Subgoal 2 completed. Installed `pytest`, routed Allen tests to vendored modules via `tests/allen_ephys_tests/conftest.py`, and fixed NumPy/SciPy-era warning behavior in `tests/allen_ephys/ephys_features.py` so vendored tests pass cleanly (including `-W error`).
+- 2026-03-04: Subgoal 2 revalidated against current test layout. Tests now import vendored `tests.allen_ephys` modules directly, `calculate_dvdt` handles `dt == 0` without runtime warnings, CI runs vendored tests directly, and detailed compatibility notes are documented in `tests/allen_ephys/VENDORED_FIXES.md`.
