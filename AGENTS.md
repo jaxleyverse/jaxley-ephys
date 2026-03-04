@@ -30,7 +30,7 @@ correct, readable, and aligned with project goals.
 - Package metadata: `pyproject.toml`
 - Source package currently minimal: `jaxley_ephys/__init__.py`
 - Allen reference code vendored under `tests/allen_ephys/`
-- Allen tests under `tests/allen_ephys_tests/`
+- Allen tests under `tests/test_allen_features.py` and `tests/test_allen_extractor.py`
 - No Cursor/Copilot instruction files detected:
   - no `.cursorrules`
   - no `.cursor/rules/`
@@ -39,12 +39,16 @@ correct, readable, and aligned with project goals.
 ## Environment And Setup
 Run from repository root.
 
+Dependency management rule:
+- Add/update dependencies with `uv add` (or `uv add --optional dev` for dev deps)
+- Do not use direct `pip install ...` for dependency management
+
 1. Sync environment
    - `uv sync`
 2. Sync dev dependencies
-   - `uv sync --group dev`
-3. Ensure pytest is available (not currently in `pyproject.toml`)
-   - `uv pip install pytest`
+   - `uv sync --extra dev`
+3. Ensure dev tools are installed (pytest is in dev dependencies)
+   - `uv sync --extra dev`
 
 Quick checks:
 - `uv run python -V`
@@ -102,8 +106,16 @@ Expected usage:
 Tests should fail early with a clear action message if required cache is missing.
 
 ## Lint / Format / Types
-No lint/format/type tool is currently configured in `pyproject.toml`.
-Until tooling is added, follow these conventions:
+Configured tools:
+- Lint/format: `ruff`
+- Pre-commit hooks: `pre-commit` (`.pre-commit-config.yaml`)
+
+Run:
+- `uv run ruff check .`
+- `uv run ruff format .`
+- `uv run pre-commit run --all-files`
+
+Style conventions:
 
 - PEP 8 style baseline
 - 4-space indentation
@@ -111,11 +123,6 @@ Until tooling is added, follow these conventions:
 - Keep functions cohesive and short where practical
 - No dense nested comprehensions that hurt readability
 - Avoid unnecessary abstractions or class-heavy patterns
-
-When tools are later added, recommended defaults:
-- Lint: `ruff`
-- Format: `black`
-- Types: `mypy` or `pyright`
 
 ## Imports
 - Order: stdlib, third-party, local

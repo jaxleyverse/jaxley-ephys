@@ -27,10 +27,23 @@ Reason: pandas 3 removed `.ix`; extractor fails with `AttributeError` otherwise.
 Reason: `tests/data/spike_test_var_dt.txt` has one repeated timestamp (`dt == 0`),
 which triggers `RuntimeWarning: invalid value encountered in divide`.
 
+4) make spike-train metrics robust on edge-case sweeps
+- `tests/allen_ephys/ephys_extractor.py`
+  - `pause_metrics`: return `(0, 0.)` when no spikes are present
+  - `burst_metrics`: return `(0., 0)` when no spikes are present and guard
+    against edge-case exceptions in burst detection
+  - `delay_metrics`: guard prespike fit with warning-safe/exception-safe path
+
+Reason: on real cached sweeps, these methods were raising errors/warnings for
+valid "no-spike" or unstable-fit cases. They now fail soft with neutral values.
+
 ## Validation
 
 ```bash
 uv run python -m pytest tests/test_allen_features.py tests/test_allen_extractor.py -q
+uv run python -m pytest tests/test_vendored_computability.py -q
 ```
 
-Current result: `31 passed, 1 skipped`.
+Current result:
+- `tests/test_allen_features.py tests/test_allen_extractor.py`: `31 passed, 1 skipped`
+- `tests/test_vendored_computability.py`: `25 passed`

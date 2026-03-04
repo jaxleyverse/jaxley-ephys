@@ -17,21 +17,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
       - name: Install dependencies
         run: |
-          uv sync
-          uv sync --group dev
-          uv pip install pytest
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
 
       - name: Generate Allen cache smoke fixture
         run: |
-          uv run python tests/utils/load_allen_testcases.py --cell-ids 525011903
+          python tests/utils/load_allen_testcases.py --cell-ids 525011903
 
       - name: Run vendored Allen tests
         run: |
-          uv run python -m pytest tests/test_allen_features.py tests/test_allen_extractor.py -vv
+          python -m pytest tests/test_allen_features.py tests/test_allen_extractor.py -vv
