@@ -20,12 +20,12 @@ Goal: Create reproducible cached testcases from Allen with mixed mouse/human cel
 - [x] Create `tests/utils/load_allen_testcases.py`
 - [x] Hardcode a mixed panel of Allen cell IDs at top of loader script
 - [x] Download and store per-cell sweep data as:
-  - `tests/data/allen_cache/cell_{cell_id}_data.npz`
-  - `tests/data/allen_cache/cell_{cell_id}_meta.json`
+  - `tests/data/cell_{cell_id}_data.npz`
+  - `tests/data/cell_{cell_id}_meta.json`
 - [x] Include long-square, ramp, and short-square sweep metadata required for testing
 - [x] Include website/database-provided feature values in meta JSON (for later comparison)
 - [x] Add clear CLI usage/help text to loader script
-- [x] Add `tests/data/allen_cache/` to `.gitignore`
+- [x] Keep processed testcase artifacts under `tests/data/` and raw AllenSDK cache under `tests/data/allen_cache/`
 - [x] Smoke-run loader for at least one cell and verify files are written
 
 Exit criteria:
@@ -156,6 +156,6 @@ Exit criteria:
 ## Progress Notes
 - 2026-03-03: Plan initialized and linked from `AGENTS.md`. No implementation subgoal started yet.
 - 2026-03-03: Subgoal 1 completed. Added `tests/utils/load_allen_testcases.py`, added cache ignore rule, and smoke-tested cache generation for specimen `525011903`.
-- 2026-03-04: Subgoal 1 hardening: loader now supports `--manifest-file` and defaults to `tests/data/allen_cache/cell_types_manifest.json` so AllenSDK cache stays under `tests/data`. Added CI workflow at `.github/workflows/ci.yml` with cache generation smoke test and stable Allen feature tests.
+- 2026-03-04: Subgoal 1 hardening: loader now supports `--manifest-file` and defaults to `<output-dir>/cell_types_manifest.json` so AllenSDK cache stays under `tests/data`. Added CI workflow at `.github/workflows/ci.yml` with cache generation smoke test and stable Allen feature tests.
 - 2026-03-04: Subgoal 1 hardening: loader now skips existing per-specimen cache files by default and fetches only missing specimens; added `--force` to regenerate. Simplified CI to run loader without forcing redownloads.
 - 2026-03-03: Subgoal 2 completed. Installed `pytest`, routed Allen tests to vendored modules via `tests/allen_ephys_tests/conftest.py`, and fixed NumPy/SciPy-era warning behavior in `tests/allen_ephys/ephys_features.py` so vendored tests pass cleanly (including `-W error`).

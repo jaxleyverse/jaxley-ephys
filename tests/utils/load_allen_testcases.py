@@ -4,9 +4,12 @@
 This script fetches mixed mouse/human specimens from the Allen Cell Types
 Database, then stores sweep traces and metadata locally for deterministic tests.
 
-Output per cell:
-- tests/data/allen_cache/cell_<specimen_id>_data.npz
-- tests/data/allen_cache/cell_<specimen_id>_meta.json
+Output per cell (test artifacts):
+- tests/data/cell_<specimen_id>_data.npz
+- tests/data/cell_<specimen_id>_meta.json
+
+AllenSDK raw/download cache (re-downloadable):
+- tests/data/allen_cache/
 
 NPZ schema (one row per selected sweep):
 - specimen_id: scalar int
@@ -224,7 +227,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("tests/data/allen_cache"),
+        default=Path("tests/data"),
         help="Output directory for .npz/.json cache files.",
     )
     parser.add_argument(
@@ -233,7 +236,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "AllenSDK manifest path. Defaults to "
-            "<output-dir>/cell_types_manifest.json to keep Allen cache under tests/data."
+            "<allen-cache-dir>/cell_types_manifest.json."
+        ),
+    )
+    parser.add_argument(
+        "--allen-cache-dir",
+        type=Path,
+        default=Path("tests/data/allen_cache"),
+        help=(
+            "Directory for AllenSDK raw cache files (cells.json, ephys_features.csv, "
+            "specimen_* folders)."
         ),
     )
     parser.add_argument(
@@ -254,9 +266,11 @@ def main() -> None:
     force = bool(args.force or args.overwrite)
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+    allen_cache_dir = args.allen_cache_dir
+    allen_cache_dir.mkdir(parents=True, exist_ok=True)
     manifest_file = args.manifest_file
     if manifest_file is None:
-        manifest_file = output_dir / "cell_types_manifest.json"
+        manifest_file = allen_cache_dir / "cell_types_manifest.json"
     manifest_file.parent.mkdir(parents=True, exist_ok=True)
 
     cell_ids = [int(cid) for cid in args.cell_ids]

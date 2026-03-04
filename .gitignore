@@ -9,8 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
-# Cached Allen testcases (regenerated via tests/utils/load_allen_testcases.py)
-tests/data/allen_cache/
-
 # Legacy AllenSDK default cache path (avoid new cache here)
 cell_types/
+
+# Re-downloadable AllenSDK raw cache; keep processed test artifacts in tests/data/
+tests/data/allen_cache/
