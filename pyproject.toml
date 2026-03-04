@@ -1,0 +1,17 @@
+[project]
+name = "jaxley-features"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "jaxley>=0.13.0",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.8",
+    "pandas>=3.0.1",
+]
+
+[dependency-groups]
+dev = [
+    "allensdk>=0.16.3",
+]

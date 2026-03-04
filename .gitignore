@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Cached Allen testcases (regenerated via tests/utils/load_allen_testcases.py)
+tests/data/allen_cache/
+
+# Legacy AllenSDK default cache path (avoid new cache here)
+cell_types/
