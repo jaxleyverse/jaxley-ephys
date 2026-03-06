@@ -54,6 +54,12 @@ DEFAULT_CELL_IDS = [
     485909730,
 ]
 
+CANONICAL_STIMULUS_NAMES = {
+    "Long Square",
+    "Short Square",
+    "Ramp",
+}
+
 
 def _install_numpy_compat_shim() -> None:
     """Install compatibility shim for AllenSDK on newer NumPy versions."""
@@ -73,8 +79,7 @@ def _install_h5py_compat_shim() -> None:
 def _is_target_stimulus(stimulus_name: str | None) -> bool:
     if not stimulus_name:
         return False
-    name = stimulus_name.lower()
-    return "long square" in name or "short square" in name or "ramp" in name
+    return stimulus_name in CANONICAL_STIMULUS_NAMES
 
 
 def _safe_float(value: Any) -> float:
@@ -130,7 +135,7 @@ def _save_cell_cache(
 
     if not target_sweeps:
         raise RuntimeError(
-            f"Specimen {specimen_id} has no long-square/ramp/short-square sweeps"
+            f"Specimen {specimen_id} has no canonical Long Square/Ramp/Short Square sweeps"
         )
 
     ephys_data = cell_types_cache.get_ephys_data(specimen_id)
@@ -194,6 +199,7 @@ def _save_cell_cache(
 
     meta = {
         "specimen_id": specimen_id,
+        "stimulus_selection_policy": sorted(CANONICAL_STIMULUS_NAMES),
         "cell_metadata": cell,
         "ephys_features": feature_lookup.get(specimen_id),
         "selected_sweeps": target_sweeps,

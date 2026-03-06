@@ -17,7 +17,7 @@ This file is the canonical execution plan for `jaxley-ephys`.
 ## Subgoal 1 - Reproducible Allen testcase loader and cache
 Goal: Create reproducible cached testcases from Allen with mixed mouse/human cells.
 
-- [x] Create `tests/utils/load_allen_testcases.py`
+- [x] Create `tests/load_testdata.py`
 - [x] Hardcode a mixed panel of Allen cell IDs at top of loader script
 - [x] Download and store per-cell sweep data as:
   - `tests/data/cell_{cell_id}_data.npz`
@@ -37,9 +37,9 @@ Goal: Ensure vendored Allen feature extraction executes with current environment
 
 - [x] Ensure environment setup commands work (`uv sync`, dev deps, `pytest`)
 - [x] Run Allen vendored tests:
-  - `uv run python -m pytest tests/test_allen_features.py tests/test_allen_extractor.py`
+  - `uv run python -m pytest tests/allen_ephys/test_allen_features.py tests/allen_ephys/test_allen_extractor.py`
 - [x] Run same test suite with warnings elevated:
-  - `uv run python -m pytest -W error tests/test_allen_features.py tests/test_allen_extractor.py`
+  - `uv run python -m pytest -W error tests/allen_ephys/test_allen_features.py tests/allen_ephys/test_allen_extractor.py`
 - [x] Capture failures/warnings due to NumPy/SciPy/API changes
 - [x] Apply minimal compatibility fixes to tests-side Allen code if required
 - [x] Re-run targeted failing tests until stable
@@ -50,14 +50,14 @@ Exit criteria:
 ## Subgoal 3 - Validate Allen extraction against Allen website/database features
 Goal: Verify extracted Allen features match stored/served Allen features where applicable.
 
-- [ ] Implement comparison tests in `tests/reference/` for sweep-level features first
-- [ ] Prioritize sweep comparisons in order:
+- [x] Implement atomic comparison tests for sweep-level features
+- [x] Prioritize sweep comparisons in order:
   1. long square
   2. ramp
   3. short square
-- [ ] Add cell-level comparison tests after sweep-level is stable
-- [ ] Define per-feature tolerance policy (`atol`/`rtol`) in one place
-- [ ] Produce mismatch reports with cell ID, sweep ID, feature name, values, and delta
+- [x] Add cell-level comparison tests after sweep-level is stable
+- [x] Define per-feature tolerance policy (`atol`/`rtol`) in one place
+- [x] Produce mismatch reports with cell ID, feature name, values, and delta
 - [ ] Document confirmed Allen mismatches/bugs with minimal reproductions
 
 Exit criteria:
@@ -144,6 +144,7 @@ Exit criteria:
 ## Subgoal 10 - Cleanup and release readiness
 Goal: Final cleanup, docs alignment, and reliable test workflow.
 
+- [ ] Remove temporary Allen DB reporting helpers once parity checks are finalized
 - [ ] Remove dead code and stale experimental helpers
 - [ ] Ensure docs match real commands, paths, and package names
 - [ ] Ensure cache precondition is clearly communicated in pytest failures
@@ -155,10 +156,11 @@ Exit criteria:
 
 ## Progress Notes
 - 2026-03-03: Plan initialized and linked from `AGENTS.md`. No implementation subgoal started yet.
-- 2026-03-03: Subgoal 1 completed. Added `tests/utils/load_allen_testcases.py`, added cache ignore rule, and smoke-tested cache generation for specimen `525011903`.
+- 2026-03-03: Subgoal 1 completed. Added `tests/load_testdata.py`, added cache ignore rule, and smoke-tested cache generation for specimen `525011903`.
 - 2026-03-04: Subgoal 1 hardening: loader now supports `--manifest-file` and defaults to `<output-dir>/cell_types_manifest.json` so AllenSDK cache stays under `tests/data`. Added CI workflow at `.github/workflows/ci.yml` with cache generation smoke test and stable Allen feature tests.
 - 2026-03-04: Subgoal 1 hardening: loader now skips existing per-specimen cache files by default and fetches only missing specimens; added `--force` to regenerate. Simplified CI to run loader without forcing redownloads.
-- 2026-03-03: Subgoal 2 completed. Installed `pytest`, routed Allen tests to vendored modules in `tests/test_allen_features.py` and `tests/test_allen_extractor.py`, and fixed NumPy/SciPy-era warning behavior in `tests/allen_ephys/ephys_features.py` so vendored tests pass cleanly.
-- 2026-03-04: Subgoal 2 revalidated against current test layout. Tests now import vendored `tests.allen_ephys` modules directly, `calculate_dvdt` handles `dt == 0` without runtime warnings, CI runs vendored tests directly, and detailed compatibility notes are documented in `tests/allen_ephys/VENDORED_FIXES.md`.
-- 2026-03-04: Subgoal 4 (partial) hardening completed on one cached specimen. Added atomic computability tests in `tests/test_vendored_computability.py` and fixed vendored edge-case failures/warnings in pause/burst/delay metrics. Remaining Subgoal 4 tasks are wrappers/parameter freeze for parity stage.
+- 2026-03-03: Subgoal 2 completed. Installed `pytest`, routed Allen tests to vendored modules in `tests/allen_ephys/test_allen_features.py` and `tests/allen_ephys/test_allen_extractor.py`, and fixed NumPy/SciPy-era warning behavior in `allen_ephys/ephys_features.py` so vendored tests pass cleanly.
+- 2026-03-04: Subgoal 2 revalidated against current test layout. Tests now import vendored `allen_ephys` modules directly, `calculate_dvdt` handles `dt == 0` without runtime warnings, CI runs vendored tests directly, and detailed compatibility notes are documented in `allen_ephys/ALLEN_EPHYS_FIXES.md`.
+- 2026-03-04: Subgoal 4 (partial) hardening completed on one cached specimen. Added atomic computability tests in `tests/allen_ephys/test_integrity.py` and fixed vendored edge-case failures/warnings in pause/burst/delay metrics. Remaining Subgoal 4 tasks are wrappers/parameter freeze for parity stage.
 - 2026-03-04: Extended computability checks to cover representative sweeps for long-square, ramp, and short-square stimuli, moved shared cached-data helpers to `tests/utils/cached_testcase.py`, and manually verified Allen DB ephys feature key coverage from vendored extracted outputs (excluding non-computed recording/QC metadata keys).
+- 2026-03-05: Simplified vendored-test setup around a single cached-specimen fixture layer in `tests/conftest.py`, removed extra cache/compare utility modules, and expanded atomic sweep/cell/database comparison tests to run across all cached specimens. Added report script `tests/allen_ephys/report_match_data.py` to classify matches, mismatches, and likely unit issues.

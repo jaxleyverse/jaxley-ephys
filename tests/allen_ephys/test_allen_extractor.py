@@ -38,11 +38,11 @@ from unittest import mock
 
 import pytest
 import numpy as np
-from tests.allen_ephys.ephys_extractor import (
+from allen_ephys.ephys_extractor import (
     EphysSweepSetFeatureExtractor,
     input_resistance,
 )
-import tests.allen_ephys.ephys_extractor as ephys_extractor
+import allen_ephys.ephys_extractor as ephys_extractor
 import os
 
 path = os.path.dirname(__file__)
@@ -53,7 +53,7 @@ def test_extractor_no_values():
 
 
 def test_extractor_wrong_inputs():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     i = np.zeros_like(v)
@@ -75,7 +75,7 @@ def test_extractor_wrong_inputs():
 
 
 def test_extractor_on_sample_data():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
 
@@ -99,7 +99,7 @@ def test_extractor_on_sample_data():
 
 
 def test_extractor_on_sample_data_with_i():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     i = np.zeros_like(v)
@@ -118,7 +118,7 @@ def test_extractor_on_zero_voltage():
 
 
 def test_extractor_on_variable_time_step():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_var_dt.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_var_dt.txt"))
     t = data[:, 0]
     v = data[:, 1]
 
@@ -130,7 +130,7 @@ def test_extractor_on_variable_time_step():
 
 
 def test_extractor_with_high_init_dvdt():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_high_init_dvdt.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_high_init_dvdt.txt"))
     t = data[:, 0]
     v = data[:, 1]
 
@@ -175,7 +175,7 @@ def test_fit_fi_slope():
             return rates
 
     with mock.patch(
-        "tests.allen_ephys.ephys_extractor._step_stim_amp", new_callable=build_stim_amps
+        "allen_ephys.ephys_extractor._step_stim_amp", new_callable=build_stim_amps
     ):
         slope_obt = ephys_extractor.fit_fi_slope(Ext())
         assert np.allclose(weights[0], slope_obt)

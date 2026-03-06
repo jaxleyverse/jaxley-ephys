@@ -14,3 +14,6 @@ cell_types/
 
 # Re-downloadable AllenSDK raw cache; keep processed test artifacts in tests/data/
 tests/data/allen_cache/
+
+# Local preprocessed Allen traces (large, reproducible)
+tests/data/cell_*_data.npz

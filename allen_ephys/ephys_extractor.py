@@ -305,7 +305,7 @@ class EphysSweepFeatureExtractor:
                 "adapt": ft.adaptation_index(isis),
                 "latency": ft.latency(t, thresholds, self.start),
                 "isi_cv": (isis.std() / isis.mean()) if len(isis) >= 1 else np.nan,
-                "mean_isi": isis.mean() if len(isis) > 0 else np.nan,
+                "mean_isi": 1e3 * isis.mean() if len(isis) > 0 else np.nan,
                 "median_isi": np.median(isis),
                 "first_isi": isis[0] if len(isis) >= 1 else np.nan,
                 "avg_rate": ft.average_rate(t, thresholds, self.start, self.end),
@@ -537,7 +537,7 @@ class EphysSweepFeatureExtractor:
 
         Returns
         -------
-        tau : membrane time constant in seconds
+        tau : membrane time constant in milliseconds
         """
 
         # Assumes this is being done on a hyperpolarizing step
@@ -562,7 +562,7 @@ class EphysSweepFeatureExtractor:
             self.v, self.t, fit_start, fit_end
         )
 
-        return 1.0 / inv_tau
+        return 1e3 / inv_tau
 
     def estimate_sag(self, peak_width=0.005):
         """Calculate the sag in a hyperpolarizing voltage response.
@@ -1004,9 +1004,10 @@ class EphysCellFeatureExtractor:
         ]
 
         if len(spiking_sweeps) == 0:
-            raise ft.FeatureError(
-                "No spiking short square sweeps, cannot compute cell features."
-            )
+            self._features["short_squares"]["stimulus_amplitude"] = np.nan
+            self._short_squares_ext = EphysSweepSetFeatureExtractor.from_sweeps([])
+            self._features["short_squares"]["common_amp_sweeps"] = []
+            return
 
         most_common = Counter(map(_short_step_stim_amp, spiking_sweeps)).most_common()
         common_amp, common_count = most_common[0]
@@ -1228,7 +1229,7 @@ def input_resistance(ext):
 
 def membrane_time_constant(ext):
     """Average the membrane time constant values estimated from each sweep
-    in passed extractor."""
+    in passed extractor (milliseconds)."""
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")

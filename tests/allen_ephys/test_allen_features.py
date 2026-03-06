@@ -34,7 +34,7 @@
 # POSSIBILITY OF SUCH DAMAGE.
 #
 import pytest
-import tests.allen_ephys.ephys_features as ft
+import allen_ephys.ephys_features as ft
 import numpy as np
 import os
 
@@ -83,7 +83,7 @@ def test_fixed_dt():
 
 
 def test_detect_one_spike():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     expected_spikes = np.array([728])
@@ -92,7 +92,7 @@ def test_detect_one_spike():
 
 
 def test_detect_two_spikes():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     expected_spikes = np.array([728, 3386])
@@ -101,7 +101,7 @@ def test_detect_two_spikes():
 
 
 def test_detect_no_spikes():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = np.zeros_like(t)
 
@@ -109,7 +109,7 @@ def test_detect_no_spikes():
 
 
 def test_detect_no_spike_peaks():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = np.zeros_like(t)
     spikes = np.array([])
@@ -118,7 +118,7 @@ def test_detect_no_spike_peaks():
 
 
 def test_detect_two_spike_peaks():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     spikes = np.array([728, 3386])
@@ -128,7 +128,7 @@ def test_detect_two_spike_peaks():
 
 
 def test_filter_problem_spikes():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     spikes = np.array([728, 3386])
@@ -140,7 +140,7 @@ def test_filter_problem_spikes():
 
 
 def test_filter_no_spikes():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = np.zeros_like(t)
     spikes = np.array([])
@@ -151,7 +151,7 @@ def test_filter_no_spikes():
 
 
 def test_upstrokes():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     spikes = np.array([728, 3386])
@@ -164,7 +164,7 @@ def test_upstrokes():
 
 
 def test_thresholds():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     upstrokes = np.array([778, 3440])
@@ -176,7 +176,7 @@ def test_thresholds():
 
 
 def test_thresholds_cannot_find_target():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     upstrokes = np.array([778, 3440])
@@ -202,7 +202,7 @@ def test_check_spikes_and_peaks():
 
 
 def test_troughs():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     spikes = np.array([725, 3382])
@@ -213,7 +213,7 @@ def test_troughs():
 
 
 def test_troughs_with_peak_at_end():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     spikes = np.array([725, 3382])
@@ -227,7 +227,7 @@ def test_troughs_with_peak_at_end():
 
 
 def test_downstrokes():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     peaks = np.array([812, 3478])
@@ -240,7 +240,7 @@ def test_downstrokes():
 
 
 def test_downstrokes_too_many_troughs():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     peaks = np.array([812, 3478])
@@ -251,7 +251,7 @@ def test_downstrokes_too_many_troughs():
 
 
 def test_width_calculation():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     spikes = np.array([725, 3382])
@@ -263,7 +263,7 @@ def test_width_calculation():
 
 
 def test_width_calculation_too_many_troughs():
-    data = np.loadtxt(os.path.join(path, "data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     spikes = np.array([725, 3382])

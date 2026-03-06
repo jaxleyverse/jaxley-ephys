@@ -29,8 +29,8 @@ correct, readable, and aligned with project goals.
 ## Current Repository Reality
 - Package metadata: `pyproject.toml`
 - Source package currently minimal: `jaxley_ephys/__init__.py`
-- Allen reference code vendored under `tests/allen_ephys/`
-- Allen tests under `tests/test_allen_features.py` and `tests/test_allen_extractor.py`
+- Allen reference code vendored under `allen_ephys/`
+- Allen tests under `tests/allen_ephys/test_allen_features.py` and `tests/allen_ephys/test_allen_extractor.py`
 - No Cursor/Copilot instruction files detected:
   - no `.cursorrules`
   - no `.cursor/rules/`
@@ -71,11 +71,11 @@ Prefer `python -m pytest` invocations.
 - Run all tests
   - `uv run python -m pytest`
 - Run Allen vendored tests only
-  - `uv run python -m pytest tests/test_allen_features.py tests/test_allen_extractor.py`
+  - `uv run python -m pytest tests/allen_ephys/test_allen_features.py tests/allen_ephys/test_allen_extractor.py`
 - Run single test file
-  - `uv run python -m pytest tests/test_allen_features.py`
+  - `uv run python -m pytest tests/allen_ephys/test_allen_features.py`
 - Run single test function
-  - `uv run python -m pytest tests/test_allen_features.py::test_detect_two_spikes`
+  - `uv run python -m pytest tests/allen_ephys/test_allen_features.py::test_detect_two_spikes`
 - Run by keyword
   - `uv run python -m pytest -k "threshold or trough"`
 - Stop on first failure
@@ -86,8 +86,8 @@ Prefer `python -m pytest` invocations.
   - `uv run python -m pytest -W error`
 
 Single-test examples expected during development:
-- `uv run python -m pytest tests/test_allen_extractor.py::test_extractor_on_variable_time_step -vv`
-- `uv run python -m pytest tests/test_allen_features.py::test_width_calculation -vv`
+- `uv run python -m pytest tests/allen_ephys/test_allen_extractor.py::test_extractor_on_variable_time_step -vv`
+- `uv run python -m pytest tests/allen_ephys/test_allen_features.py::test_width_calculation -vv`
 
 ## Planned Testcase Cache Workflow
 Planned cache location:
@@ -95,11 +95,11 @@ Planned cache location:
 - Re-downloadable AllenSDK raw cache should live in `tests/data/allen_cache/`
 
 Planned loader script:
-- `tests/utils/load_allen_testcases.py`
+- `tests/load_testdata.py`
 
 Expected usage:
 1. Generate cache first:
-   - `uv run python tests/utils/load_allen_testcases.py`
+   - `uv run python tests/load_testdata.py`
 2. Run cache-dependent tests:
    - `uv run python -m pytest tests/reference tests/parity`
 

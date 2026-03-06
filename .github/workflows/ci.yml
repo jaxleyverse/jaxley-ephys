@@ -24,8 +24,8 @@ jobs:
 
       - name: Generate Allen cache smoke fixture
         run: |
-          python tests/utils/load_allen_testcases.py --cell-ids 525011903
+          python tests/load_testdata.py --cell-ids 525011903
 
       - name: Run vendored Allen tests
         run: |
-          python -m pytest tests/test_allen_features.py tests/test_allen_extractor.py -vv
+          python -m pytest tests/allen_ephys/test_allen_features.py tests/allen_ephys/test_allen_extractor.py -vv
