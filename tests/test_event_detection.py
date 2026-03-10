@@ -75,22 +75,14 @@ def test_detect_events_matches_allen_spike_detection(specimen_case, sweep_kind):
     )
     expected = _reformat_allen_events(sweep, max_spikes=max_spikes)
 
-    assert abs(int(ev.n_spikes) - expected["n_spikes"]) <= 1
+    assert int(ev.n_spikes) == expected["n_spikes"]
     assert bool(ev.overflow) == expected["overflow"]
-
-    n = min(int(ev.n_spikes), expected["n_spikes"])
-    got_thr = np.asarray(ev.threshold_idxs)[:n]
-    exp_thr = expected["threshold_idx"][:n]
-    got_peak = np.asarray(ev.peak_idxs)[:n]
-    exp_peak = expected["peak_idx"][:n]
-    got_tr = np.asarray(ev.trough_idxs)[:n]
-    exp_tr = expected["trough_idx"][:n]
-
-    if n > 0:
-        assert np.all(np.abs(got_thr - exp_thr) <= 20)
-        assert np.all(np.abs(got_peak - exp_peak) <= 20)
-        tr_ok = (got_tr < 0) | (exp_tr < 0) | (np.abs(got_tr - exp_tr) <= 20)
-        assert np.all(tr_ok)
+    assert np.array_equal(np.asarray(ev.threshold_idxs), expected["threshold_idx"])
+    assert np.array_equal(np.asarray(ev.peak_idxs), expected["peak_idx"])
+    assert np.array_equal(np.asarray(ev.trough_idxs), expected["trough_idx"])
+    assert np.array_equal(np.asarray(ev.threshold_valid), expected["threshold_valid"])
+    assert np.array_equal(np.asarray(ev.peak_valid), expected["peak_valid"])
+    assert np.array_equal(np.asarray(ev.trough_valid), expected["trough_valid"])
 
 
 def test_matches_allen_synthetic():
