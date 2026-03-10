@@ -5,12 +5,19 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tests.conftest import build_specimen_cases
-from tests.utils.match_data_utils import compare_with_database
+from tests.utils.match_data_utils import (
+    DEFAULT_TOLERANCE,
+    FEATURE_TOLERANCES,
+    expected_db_feature_dict,
+    flatten_for_db,
+)
 
 
 def main() -> None:
@@ -22,17 +29,37 @@ def main() -> None:
     key_samples: Counter[str] = Counter()
 
     for specimen_id, case in sorted(cases.items()):
-        entries = compare_with_database(case)
-        specimen_counts = Counter(entry.status for entry in entries.values())
+        expected = expected_db_feature_dict(case.meta)
+        computed = flatten_for_db(case.compute_cell_features())
+
+        specimen_counts: Counter[str] = Counter()
+        mismatches: list[tuple[str, float]] = []
+        for key, exp in expected.items():
+            comp = computed.get(key, float("nan"))
+            if np.isnan(exp) and np.isnan(comp):
+                status = "match"
+            elif np.isnan(exp):
+                status = "expected_missing"
+            elif np.isnan(comp):
+                status = "computed_missing"
+            else:
+                tol = FEATURE_TOLERANCES.get(key, DEFAULT_TOLERANCE)
+                if np.isclose(exp, comp, atol=tol.atol, rtol=tol.rtol):
+                    status = "match"
+                else:
+                    status = "mismatch"
+                    mismatches.append((key, abs(comp - exp)))
+
+            specimen_counts[status] += 1
+            key_status.setdefault(key, Counter())
+            key_status[key][status] += 1
+
+        for key, abs_diff in mismatches:
+            key_absdiff[key] = key_absdiff.get(key, 0.0) + abs_diff
+            key_samples[key] += 1
+
         status_totals.update(specimen_counts)
         print(f"specimen={specimen_id} counts={dict(specimen_counts)}")
-
-        for key, entry in entries.items():
-            key_status.setdefault(key, Counter())
-            key_status[key][entry.status] += 1
-            if entry.abs_diff is not None:
-                key_absdiff[key] = key_absdiff.get(key, 0.0) + entry.abs_diff
-                key_samples[key] += 1
 
     print("\nstatus_totals", dict(status_totals))
 
@@ -42,12 +69,6 @@ def main() -> None:
     )
     for key in all_match:
         print(f"- {key}")
-
-    print("\nunit-suspect features")
-    for key in sorted(key_status):
-        counts = key_status[key]
-        if counts.get("unit_suspect", 0) > 0:
-            print(f"- {key}: {counts.get('unit_suspect', 0)} / {sum(counts.values())}")
 
     print("\nmismatch features")
     for key in sorted(key_status):

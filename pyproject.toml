@@ -5,14 +5,17 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "jaxley>=0.13.0",
-    "jupyter>=1.1.1",
+    "jax>=0.9.1",
     "matplotlib>=3.10.8",
+    "numpy>=2.4.2",
     "pandas>=3.0.1",
+    "scipy>=1.17.1",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "jaxley>=0.13.0",
+    "jupyter>=1.1.1",
     "allensdk>=0.16.3",
     "pre-commit>=4.5.1",
     "pytest>=9.0.2",

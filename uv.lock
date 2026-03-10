@@ -822,15 +822,18 @@ name = "jaxley-ephys"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "jaxley" },
-    { name = "jupyter" },
+    { name = "jax" },
     { name = "matplotlib" },
+    { name = "numpy" },
     { name = "pandas" },
+    { name = "scipy" },
 ]
 
 [package.optional-dependencies]
 dev = [
     { name = "allensdk" },
+    { name = "jaxley" },
+    { name = "jupyter" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "ruff" },
@@ -839,13 +842,16 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "allensdk", marker = "extra == 'dev'", specifier = ">=0.16.3" },
-    { name = "jaxley", specifier = ">=0.13.0" },
-    { name = "jupyter", specifier = ">=1.1.1" },
+    { name = "jax", specifier = ">=0.9.1" },
+    { name = "jaxley", marker = "extra == 'dev'", specifier = ">=0.13.0" },
+    { name = "jupyter", marker = "extra == 'dev'", specifier = ">=1.1.1" },
     { name = "matplotlib", specifier = ">=3.10.8" },
+    { name = "numpy", specifier = ">=2.4.2" },
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.5.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.4" },
+    { name = "scipy", specifier = ">=1.17.1" },
 ]
 provides-extras = ["dev"]
 
