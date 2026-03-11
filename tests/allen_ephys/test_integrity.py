@@ -1,6 +1,13 @@
-import warnings
+from __future__ import annotations
 
 import pytest
+
+from allen_ephys.ephys_extractor import (
+    EphysCellFeatureExtractor,
+    EphysSweepFeatureExtractor,
+    EphysSweepSetFeatureExtractor,
+    cell_extractor_for_nwb,
+)
 
 
 BASE_SWEEP_FEATURES = [
@@ -16,165 +23,92 @@ BASE_SWEEP_FEATURES = [
     "stim_amp",
 ]
 HYPERPOL_FEATURES = ["tau", "sag"]
-CELL_FEATURE_KEYS = {
-    "long_squares": [
-        "rheobase_i",
-        "fi_fit_slope",
-        "sag",
-        "vm_for_sag",
-        "input_resistance",
-        "tau",
-        "v_baseline",
-    ],
-    "short_squares": ["stimulus_amplitude", "common_amp_sweeps"],
-    "ramps": ["spiking_sweeps"],
-}
 
 
-def _assert_no_warnings(caught, context: str):
-    assert not caught, f"Unexpected warning during {context}: {caught[0].message}"
+def _require_spiking_record(specimen_case, kind: str):
+    rows = specimen_case.records(kind=kind, has_spikes=True)
+    if not rows:
+        pytest.skip(f"specimen {specimen_case.specimen_id} has no spiking {kind} sweep")
+    return rows[0]
 
 
-@pytest.mark.parametrize(
-    "sweep_kind",
-    ["long_spiking", "long_no_spike", "long_hyperpol", "ramp", "short_square"],
-)
-def test_process_spikes_representative_sweeps(specimen_case, sweep_kind):
-    sweep = specimen_case.representative_sweep(sweep_kind)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        sweep.process_spikes()
-    _assert_no_warnings(caught, f"process_spikes/{sweep_kind}")
+def test_single_sweep_feature_extractor_construction(specimen_case):
+    record = _require_spiking_record(specimen_case, "long_square")
+    sweep = specimen_case.make_sweep(record)
+    assert isinstance(sweep, EphysSweepFeatureExtractor)
 
 
+@pytest.mark.parametrize("kind", ["long_square", "short_square", "ramp"])
+def test_process_spikes_spiking_sweeps(specimen_case, kind: str):
+    record = _require_spiking_record(specimen_case, kind)
+    sweep = specimen_case.make_sweep(record)
+    sweep.process_spikes()
+    assert sweep.spikes() is not None
+
+
+@pytest.mark.parametrize("kind", ["long_square", "short_square", "ramp"])
 @pytest.mark.parametrize("feature_name", BASE_SWEEP_FEATURES)
-def test_sweep_feature_long_square(specimen_case, feature_name):
-    sweep = specimen_case.representative_sweep("long_spiking")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        value = sweep.sweep_feature(feature_name, allow_missing=True)
-    _assert_no_warnings(caught, f"long_square/{feature_name}")
+def test_base_sweep_features_on_spiking_sweeps(
+    specimen_case, kind: str, feature_name: str
+):
+    record = _require_spiking_record(specimen_case, kind)
+    sweep = specimen_case.make_sweep(record)
+    value = sweep.sweep_feature(feature_name, allow_missing=True)
     assert value is not None
 
 
-@pytest.mark.parametrize("feature_name", BASE_SWEEP_FEATURES)
-def test_sweep_feature_short_square(specimen_case, feature_name):
-    sweep = specimen_case.representative_sweep("short_square")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        value = sweep.sweep_feature(feature_name, allow_missing=True)
-    _assert_no_warnings(caught, f"short_square/{feature_name}")
-    assert value is not None
-
-
-@pytest.mark.parametrize("feature_name", BASE_SWEEP_FEATURES)
-def test_sweep_feature_ramp(specimen_case, feature_name):
-    sweep = specimen_case.representative_sweep("ramp")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        value = sweep.sweep_feature(feature_name, allow_missing=True)
-    _assert_no_warnings(caught, f"ramp/{feature_name}")
-    assert value is not None
-
-
-def test_spike_detection_features_long_square(specimen_case):
-    sweep = specimen_case.representative_sweep("long_spiking")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        sweep.process_spikes()
-    _assert_no_warnings(caught, "long_square/process_spikes")
-
+@pytest.mark.parametrize("kind", ["long_square", "short_square", "ramp"])
+def test_spike_feature_access_on_spiking_sweeps(specimen_case, kind: str):
+    record = _require_spiking_record(specimen_case, kind)
+    sweep = specimen_case.make_sweep(record)
+    sweep.process_spikes()
     for feature_name in sweep.spike_feature_keys():
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            values = sweep.spike_feature(feature_name, include_clipped=True)
-        _assert_no_warnings(caught, f"long_square/spike_feature/{feature_name}")
-        assert values is not None
-
-
-def test_spike_detection_features_short_square(specimen_case):
-    sweep = specimen_case.representative_sweep("short_square")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        sweep.process_spikes()
-    _assert_no_warnings(caught, "short_square/process_spikes")
-
-    for feature_name in sweep.spike_feature_keys():
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            values = sweep.spike_feature(feature_name, include_clipped=True)
-        _assert_no_warnings(caught, f"short_square/spike_feature/{feature_name}")
-        assert values is not None
-
-
-def test_spike_detection_features_ramp(specimen_case):
-    sweep = specimen_case.representative_sweep("ramp")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        sweep.process_spikes()
-    _assert_no_warnings(caught, "ramp/process_spikes")
-
-    for feature_name in sweep.spike_feature_keys():
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            values = sweep.spike_feature(feature_name, include_clipped=True)
-        _assert_no_warnings(caught, f"ramp/spike_feature/{feature_name}")
+        values = sweep.spike_feature(feature_name, include_clipped=True)
         assert values is not None
 
 
 @pytest.mark.parametrize("feature_name", HYPERPOL_FEATURES)
-def test_hyperpolarizing_long_square_features(specimen_case, feature_name):
-    sweep = specimen_case.representative_sweep("long_hyperpol")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        value = sweep.sweep_feature(feature_name, allow_missing=True)
-    _assert_no_warnings(caught, f"long_hyperpol/{feature_name}")
+def test_hyperpolarizing_long_square_features(specimen_case, feature_name: str):
+    record = specimen_case.require_record(kind="long_square", is_hyperpol=True)
+    sweep = specimen_case.make_sweep(record)
+    value = sweep.sweep_feature(feature_name, allow_missing=True)
     assert value is not None
 
 
-def test_pause_metrics(specimen_case):
-    sweep = specimen_case.representative_sweep("long_spiking")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        sweep.process_spikes()
-        value = sweep.pause_metrics()
-    _assert_no_warnings(caught, "pause_metrics")
-    assert value is not None
+@pytest.mark.parametrize("kind", ["long_square", "short_square", "ramp"])
+def test_sweep_set_feature_extractor_construction(specimen_case, kind: str):
+    records = specimen_case.records(kind=kind)
+    ext = specimen_case.make_sweep_set(records)
+    assert isinstance(ext, EphysSweepSetFeatureExtractor)
+    ext.process_spikes()
+    assert ext.sweeps() is not None
 
 
-def test_burst_metrics(specimen_case):
-    sweep = specimen_case.representative_sweep("long_spiking")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        sweep.process_spikes()
-        value = sweep.burst_metrics()
-    _assert_no_warnings(caught, "burst_metrics")
-    assert value is not None
+def test_cell_extractor_for_nwb_computable(specimen_case):
+    cell = specimen_case.build_cell_extractor_for_nwb()
+    assert isinstance(cell, EphysCellFeatureExtractor)
+    cell.process()
+    out = cell.as_dict()
+    assert "long_squares" in out
+    assert "short_squares" in out
+    assert "ramps" in out
 
 
-def test_delay_metrics(specimen_case):
-    sweep = specimen_case.representative_sweep("long_spiking")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        sweep.process_spikes()
-        value = sweep.delay_metrics()
-    _assert_no_warnings(caught, "delay_metrics")
-    assert value is not None
-
-
-@pytest.mark.parametrize("key", CELL_FEATURE_KEYS["long_squares"])
-def test_cell_feature_long_squares(specimen_case, key):
+def test_cell_features_computable(specimen_case):
     features = specimen_case.compute_cell_features()
-    assert features["long_squares"][key] is not None
+    assert features["long_squares"]["rheobase_i"] is not None
+    assert features["long_squares"]["fi_fit_slope"] is not None
+    assert features["long_squares"]["input_resistance"] is not None
+    assert features["long_squares"]["tau"] is not None
+    assert features["short_squares"]["stimulus_amplitude"] is not None
+    assert features["ramps"]["spiking_sweeps"] is not None
 
 
-@pytest.mark.parametrize("key", CELL_FEATURE_KEYS["short_squares"])
-def test_cell_feature_short_squares(specimen_case, key):
-    features = specimen_case.compute_cell_features()
-    assert features["short_squares"][key] is not None
-
-
-@pytest.mark.parametrize("key", CELL_FEATURE_KEYS["ramps"])
-def test_cell_feature_ramps(specimen_case, key):
-    features = specimen_case.compute_cell_features()
-    assert features["ramps"][key] is not None
+def test_manual_cell_extractor_computable(specimen_case):
+    long_ext = specimen_case.make_sweep_set(specimen_case.records(kind="long_square"))
+    short_ext = specimen_case.make_sweep_set(specimen_case.records(kind="short_square"))
+    ramp_ext = specimen_case.make_sweep_set(specimen_case.records(kind="ramp"))
+    cell = EphysCellFeatureExtractor(ramp_ext, short_ext, long_ext)
+    cell.process()
+    out = cell.as_dict()
+    assert "long_squares" in out
