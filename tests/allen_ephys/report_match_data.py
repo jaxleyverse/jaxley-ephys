@@ -1,84 +1,76 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import sys
 from collections import Counter
+import sys
 from pathlib import Path
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+if __package__ is None or __package__ == "":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tests.conftest import build_specimen_cases
-from tests.utils.match_data_utils import (
-    DEFAULT_TOLERANCE,
-    FEATURE_TOLERANCES,
-    expected_db_feature_dict,
-    flatten_for_db,
+from tests.allen_ephys.test_parity import (
+    _computed_cell_feature_dict,
+    _expected_cell_feature_dict,
+    _feature_tolerance,
 )
+from tests.utils.allen_dataset import cached_specimen_ids, load_specimen_case
 
 
 def main() -> None:
-    cases = build_specimen_cases()
+    specimen_ids = cached_specimen_ids()
+    if not specimen_ids:
+        raise RuntimeError(
+            "No cached specimens found in tests/testdata/allen_cache. "
+            "Run: uv run python tests/load_testdata.py"
+        )
 
-    status_totals: Counter[str] = Counter()
-    key_status: dict[str, Counter[str]] = {}
-    key_absdiff: dict[str, float] = {}
-    key_samples: Counter[str] = Counter()
+    totals: Counter[str] = Counter()
+    mismatch_counts: Counter[str] = Counter()
+    mismatch_abs_diff: dict[str, float] = {}
 
-    for specimen_id, case in sorted(cases.items()):
-        expected = expected_db_feature_dict(case.meta)
-        computed = flatten_for_db(case.compute_cell_features())
+    for specimen_id in specimen_ids:
+        specimen_case = load_specimen_case(specimen_id)
+        expected = _expected_cell_feature_dict(specimen_case)
+        computed = _computed_cell_feature_dict(specimen_case)
 
-        specimen_counts: Counter[str] = Counter()
-        mismatches: list[tuple[str, float]] = []
-        for key, exp in expected.items():
-            comp = computed.get(key, float("nan"))
-            if np.isnan(exp) and np.isnan(comp):
-                status = "match"
-            elif np.isnan(exp):
-                status = "expected_missing"
-            elif np.isnan(comp):
-                status = "computed_missing"
+        specimen_totals: Counter[str] = Counter()
+        for feature_name, expected_value in sorted(expected.items()):
+            computed_value = computed.get(feature_name, float("nan"))
+
+            if np.isnan(expected_value):
+                specimen_totals["expected_nan"] += 1
+                continue
+            if np.isnan(computed_value):
+                specimen_totals["computed_nan"] += 1
+                mismatch_counts[feature_name] += 1
+                continue
+
+            atol, rtol = _feature_tolerance(feature_name)
+            abs_diff = abs(computed_value - expected_value)
+            if abs_diff <= atol + rtol * abs(expected_value):
+                specimen_totals["match"] += 1
             else:
-                tol = FEATURE_TOLERANCES.get(key, DEFAULT_TOLERANCE)
-                if np.isclose(exp, comp, atol=tol.atol, rtol=tol.rtol):
-                    status = "match"
-                else:
-                    status = "mismatch"
-                    mismatches.append((key, abs(comp - exp)))
+                specimen_totals["mismatch"] += 1
+                mismatch_counts[feature_name] += 1
+                mismatch_abs_diff[feature_name] = (
+                    mismatch_abs_diff.get(feature_name, 0.0) + abs_diff
+                )
 
-            specimen_counts[status] += 1
-            key_status.setdefault(key, Counter())
-            key_status[key][status] += 1
+        totals.update(specimen_totals)
+        print(f"specimen={specimen_id} totals={dict(specimen_totals)}")
 
-        for key, abs_diff in mismatches:
-            key_absdiff[key] = key_absdiff.get(key, 0.0) + abs_diff
-            key_samples[key] += 1
+    print("\noverall", dict(totals))
+    if not mismatch_counts:
+        print("\nNo mismatches.")
+        return
 
-        status_totals.update(specimen_counts)
-        print(f"specimen={specimen_id} counts={dict(specimen_counts)}")
-
-    print("\nstatus_totals", dict(status_totals))
-
-    print("\nall-match features")
-    all_match = sorted(
-        key for key, counts in key_status.items() if set(counts.keys()) == {"match"}
-    )
-    for key in all_match:
-        print(f"- {key}")
-
-    print("\nmismatch features")
-    for key in sorted(key_status):
-        counts = key_status[key]
-        if counts.get("mismatch", 0) > 0:
-            n = sum(counts.values())
-            mean_abs = key_absdiff.get(key, 0.0) / max(key_samples.get(key, 0), 1)
-            print(
-                f"- {key}: {counts.get('mismatch', 0)} / {n}, mean_abs_diff={mean_abs:.6g}"
-            )
+    print("\nmismatched features")
+    for feature_name in sorted(mismatch_counts):
+        count = mismatch_counts[feature_name]
+        mean_abs = mismatch_abs_diff.get(feature_name, 0.0) / count
+        print(f"- {feature_name}: count={count} mean_abs_diff={mean_abs:.6g}")
 
 
 if __name__ == "__main__":

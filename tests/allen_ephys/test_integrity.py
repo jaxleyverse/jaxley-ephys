@@ -6,23 +6,30 @@ from allen_ephys.ephys_extractor import (
     EphysCellFeatureExtractor,
     EphysSweepFeatureExtractor,
     EphysSweepSetFeatureExtractor,
-    cell_extractor_for_nwb,
 )
 
 
-BASE_SWEEP_FEATURES = [
-    "avg_rate",
-    "adapt",
-    "latency",
-    "isi_cv",
-    "mean_isi",
-    "median_isi",
-    "first_isi",
-    "v_baseline",
-    "peak_deflect",
-    "stim_amp",
-]
-HYPERPOL_FEATURES = ["tau", "sag"]
+pytestmark = pytest.mark.filterwarnings("error")
+
+
+STIMULUS_KINDS = ("long_square", "short_square", "ramp")
+
+
+def _compute_all_sweep_features(sweep: EphysSweepFeatureExtractor) -> None:
+    for feature_name in sweep.sweep_feature_keys():
+        sweep.sweep_feature(feature_name, allow_missing=True)
+
+
+def _compute_all_spike_features(sweep: EphysSweepFeatureExtractor) -> None:
+    for feature_name in sweep.spike_feature_keys():
+        sweep.spike_feature(feature_name, include_clipped=True)
+
+
+def _require_records(specimen_case, kind: str):
+    records = specimen_case.records(kind=kind)
+    if not records:
+        pytest.skip(f"specimen {specimen_case.specimen_id} has no {kind} sweeps")
+    return records
 
 
 def _require_spiking_record(specimen_case, kind: str):
@@ -38,50 +45,36 @@ def test_single_sweep_feature_extractor_construction(specimen_case):
     assert isinstance(sweep, EphysSweepFeatureExtractor)
 
 
-@pytest.mark.parametrize("kind", ["long_square", "short_square", "ramp"])
-def test_process_spikes_spiking_sweeps(specimen_case, kind: str):
+@pytest.mark.parametrize("kind", STIMULUS_KINDS)
+def test_single_sweep_features_compute_without_errors(specimen_case, kind: str):
     record = _require_spiking_record(specimen_case, kind)
     sweep = specimen_case.make_sweep(record)
     sweep.process_spikes()
-    assert sweep.spikes() is not None
+    _compute_all_sweep_features(sweep)
+    _compute_all_spike_features(sweep)
 
 
-@pytest.mark.parametrize("kind", ["long_square", "short_square", "ramp"])
-@pytest.mark.parametrize("feature_name", BASE_SWEEP_FEATURES)
-def test_base_sweep_features_on_spiking_sweeps(
-    specimen_case, kind: str, feature_name: str
-):
-    record = _require_spiking_record(specimen_case, kind)
-    sweep = specimen_case.make_sweep(record)
-    value = sweep.sweep_feature(feature_name, allow_missing=True)
-    assert value is not None
-
-
-@pytest.mark.parametrize("kind", ["long_square", "short_square", "ramp"])
-def test_spike_feature_access_on_spiking_sweeps(specimen_case, kind: str):
-    record = _require_spiking_record(specimen_case, kind)
-    sweep = specimen_case.make_sweep(record)
-    sweep.process_spikes()
-    for feature_name in sweep.spike_feature_keys():
-        values = sweep.spike_feature(feature_name, include_clipped=True)
-        assert values is not None
-
-
-@pytest.mark.parametrize("feature_name", HYPERPOL_FEATURES)
-def test_hyperpolarizing_long_square_features(specimen_case, feature_name: str):
-    record = specimen_case.require_record(kind="long_square", is_hyperpol=True)
-    sweep = specimen_case.make_sweep(record)
-    value = sweep.sweep_feature(feature_name, allow_missing=True)
-    assert value is not None
-
-
-@pytest.mark.parametrize("kind", ["long_square", "short_square", "ramp"])
+@pytest.mark.parametrize("kind", STIMULUS_KINDS)
 def test_sweep_set_feature_extractor_construction(specimen_case, kind: str):
-    records = specimen_case.records(kind=kind)
+    records = _require_records(specimen_case, kind)
     ext = specimen_case.make_sweep_set(records)
     assert isinstance(ext, EphysSweepSetFeatureExtractor)
+
+
+@pytest.mark.parametrize("kind", STIMULUS_KINDS)
+def test_sweep_set_features_compute_without_errors(specimen_case, kind: str):
+    records = _require_records(specimen_case, kind)
+    ext = specimen_case.make_sweep_set(records)
     ext.process_spikes()
-    assert ext.sweeps() is not None
+
+    sweeps = ext.sweeps()
+    assert len(sweeps) == len(records)
+
+    for sweep in sweeps:
+        assert isinstance(sweep, EphysSweepFeatureExtractor)
+        assert sweep.spikes() is not None
+        _compute_all_sweep_features(sweep)
+        _compute_all_spike_features(sweep)
 
 
 def test_cell_extractor_for_nwb_computable(specimen_case):

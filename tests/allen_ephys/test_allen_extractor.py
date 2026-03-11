@@ -53,7 +53,7 @@ def test_extractor_no_values():
 
 
 def test_extractor_wrong_inputs():
-    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../testdata/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     i = np.zeros_like(v)
@@ -75,7 +75,7 @@ def test_extractor_wrong_inputs():
 
 
 def test_extractor_on_sample_data():
-    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../testdata/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
 
@@ -99,7 +99,7 @@ def test_extractor_on_sample_data():
 
 
 def test_extractor_on_sample_data_with_i():
-    data = np.loadtxt(os.path.join(path, "../data/spike_test_pair.txt"))
+    data = np.loadtxt(os.path.join(path, "../testdata/spike_test_pair.txt"))
     t = data[:, 0]
     v = data[:, 1]
     i = np.zeros_like(v)
@@ -118,7 +118,7 @@ def test_extractor_on_zero_voltage():
 
 
 def test_extractor_on_variable_time_step():
-    data = np.loadtxt(os.path.join(path, "../data/spike_test_var_dt.txt"))
+    data = np.loadtxt(os.path.join(path, "../testdata/spike_test_var_dt.txt"))
     t = data[:, 0]
     v = data[:, 1]
 
@@ -130,7 +130,7 @@ def test_extractor_on_variable_time_step():
 
 
 def test_extractor_with_high_init_dvdt():
-    data = np.loadtxt(os.path.join(path, "../data/spike_test_high_init_dvdt.txt"))
+    data = np.loadtxt(os.path.join(path, "../testdata/spike_test_high_init_dvdt.txt"))
     t = data[:, 0]
     v = data[:, 1]
 

@@ -60,6 +60,7 @@ class SweepRecord:
     stimulus_duration: float | None
     stimulus_absolute_amplitude: float | None
     num_spikes: int | None
+    peak_deflection: float | None
 
     @property
     def kind(self) -> str | None:
@@ -243,7 +244,7 @@ class SpecimenCase:
         return self._cell_features_cache
 
 
-def cached_specimen_ids(data_root: Path = Path("tests/data/allen_cache")) -> list[int]:
+def cached_specimen_ids(data_root: Path = Path("tests/testdata/allen_cache")) -> list[int]:
     out = []
     for path in sorted(data_root.glob("specimen_*")):
         if not path.is_dir():
@@ -259,7 +260,7 @@ def cached_specimen_ids(data_root: Path = Path("tests/data/allen_cache")) -> lis
 
 @lru_cache(maxsize=1)
 def _feature_rows(
-    data_root: str = "tests/data/allen_cache",
+    data_root: str = "tests/testdata/allen_cache",
 ) -> dict[int, dict[str, str]]:
     features_path = Path(data_root) / "ephys_features.csv"
     out: dict[int, dict[str, str]] = {}
@@ -301,6 +302,7 @@ def _load_sweep_records(specimen_id: int, data_root: Path) -> list[SweepRecord]:
                     row.get("stimulus_absolute_amplitude")
                 ),
                 num_spikes=_safe_int(row.get("num_spikes")),
+                peak_deflection=_safe_float(row.get("peak_deflection")),
             )
         )
 
@@ -311,7 +313,7 @@ def _load_sweep_records(specimen_id: int, data_root: Path) -> list[SweepRecord]:
 @lru_cache(maxsize=None)
 def load_specimen_case(
     specimen_id: int,
-    data_root: str = "tests/data/allen_cache",
+    data_root: str = "tests/testdata/allen_cache",
 ) -> SpecimenCase:
     root = Path(data_root)
     records = _load_sweep_records(specimen_id, root)

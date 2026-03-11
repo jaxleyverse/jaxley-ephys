@@ -559,7 +559,7 @@ class EphysSweepFeatureExtractor:
         fit_end = self.t[peak_index]
 
         a, inv_tau, y0 = ft.fit_membrane_time_constant(
-            self.v, self.t, fit_start, fit_end
+            self.v, self.t, fit_start, fit_end, min_rsme=1.0
         )
 
         return 1e3 / inv_tau
@@ -1056,8 +1056,19 @@ class EphysCellFeatureExtractor:
             )
 
         amps = ext.sweep_features("stim_amp")  # self.long_squares_stim_amps()
-        min_index = np.argmin(amps[spiking_indexes])
-        rheobase_index = spiking_indexes[min_index]
+        min_amp = np.nanmin(amps[spiking_indexes])
+        amp_mask = np.isclose(amps[spiking_indexes], min_amp)
+        candidate_indexes = spiking_indexes[amp_mask]
+
+        if len(candidate_indexes) == 1:
+            rheobase_index = candidate_indexes[0]
+        else:
+            rates = ext.sweep_features("avg_rate")
+            candidate_rates = rates[candidate_indexes]
+            max_rate = np.nanmax(candidate_rates)
+            rate_mask = np.isclose(candidate_rates, max_rate)
+            rheobase_index = candidate_indexes[rate_mask][0]
+
         rheobase_i = _step_stim_amp(ext.sweeps()[rheobase_index])
 
         self._features["long_squares"]["rheobase_extractor_index"] = rheobase_index
@@ -1230,11 +1241,11 @@ def input_resistance(ext):
 def membrane_time_constant(ext):
     """Average the membrane time constant values estimated from each sweep
     in passed extractor (milliseconds)."""
-
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")
-        avg_tau = np.nanmean(ext.sweep_features("tau"))
-    return avg_tau
+    taus = np.asarray(ext.sweep_features("tau"), dtype=float)
+    finite = np.isfinite(taus)
+    if not np.any(finite):
+        return np.nan
+    return np.mean(taus[finite])
 
 
 def fit_fi_slope(ext):

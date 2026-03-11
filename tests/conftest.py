@@ -5,39 +5,52 @@ import pytest
 from tests.utils.allen_dataset import cached_specimen_ids, load_specimen_case
 
 
-CACHED_SPECIMEN_IDS = cached_specimen_ids()
-
-
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
-        "--specimen-scope",
+        "--num-specimens",
         action="store",
-        default="fast",
-        choices=("fast", "slow", "all"),
-        help="Specimen scope for Allen tests: fast=1, slow=5, all=all cached.",
+        type=int,
+        default=1,
+        help="Number of cached specimens to include (default: 1).",
     )
 
 
-def _scoped_specimen_ids(scope: str) -> list[int]:
-    if scope == "fast":
-        return CACHED_SPECIMEN_IDS[:1]
-    if scope == "slow":
-        return CACHED_SPECIMEN_IDS[:5]
-    return CACHED_SPECIMEN_IDS
+def _limited_specimen_ids(num_specimens: int, all_ids: list[int]) -> list[int]:
+    if num_specimens <= 0:
+        raise pytest.UsageError("--num-specimens must be >= 1")
+    return all_ids[: min(num_specimens, len(all_ids))]
+
+
+def _selected_specimen_ids(config: pytest.Config) -> list[int]:
+    all_ids = cached_specimen_ids()
+    num_specimens = int(config.getoption("--num-specimens"))
+    return _limited_specimen_ids(num_specimens, all_ids)
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    if "specimen_id" not in metafunc.fixturenames:
+        return
+
+    selected = _selected_specimen_ids(metafunc.config)
+    if not selected:
+        selected = [-1]
+
+    metafunc.parametrize(
+        "specimen_id",
+        selected,
+        ids=[f"specimen_{specimen_id}" for specimen_id in selected],
+        scope="module",
+    )
 
 
 @pytest.fixture(scope="session")
 def specimen_ids(request: pytest.FixtureRequest) -> list[int]:
-    if not CACHED_SPECIMEN_IDS:
+    selected = _selected_specimen_ids(request.config)
+    if not selected:
         pytest.fail(
-            "No cached specimens found in tests/data/allen_cache. Run: "
+            "No cached specimens found in tests/testdata/allen_cache. Run: "
             "uv run python tests/load_testdata.py"
         )
-
-    scope = str(request.config.getoption("--specimen-scope"))
-    selected = _scoped_specimen_ids(scope)
-    if not selected:
-        pytest.fail(f"No specimens selected for scope={scope}")
     return selected
 
 
@@ -48,12 +61,11 @@ def specimen_cases(specimen_ids: list[int]):
     }
 
 
-@pytest.fixture(params=CACHED_SPECIMEN_IDS, scope="module")
-def specimen_case(
-    request: pytest.FixtureRequest,
-    specimen_ids: list[int],
-):
-    specimen_id = int(request.param)
-    if specimen_id not in specimen_ids:
-        pytest.skip(f"specimen {specimen_id} skipped by --specimen-scope")
+@pytest.fixture(scope="module")
+def specimen_case(specimen_id: int):
+    if specimen_id == -1:
+        pytest.fail(
+            "No cached specimens found in tests/testdata/allen_cache. Run: "
+            "uv run python tests/load_testdata.py"
+        )
     return load_specimen_case(specimen_id)

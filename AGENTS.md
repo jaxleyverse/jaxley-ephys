@@ -91,8 +91,8 @@ Single-test examples expected during development:
 
 ## Planned Testcase Cache Workflow
 Planned cache location:
-- `tests/data/`
-- Re-downloadable AllenSDK raw cache should live in `tests/data/allen_cache/`
+- `tests/testdata/`
+- Re-downloadable AllenSDK raw cache should live in `tests/testdata/allen_cache/`
 
 Planned loader script:
 - `tests/load_testdata.py`

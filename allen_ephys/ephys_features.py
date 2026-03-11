@@ -900,7 +900,7 @@ def fit_membrane_time_constant(v, t, start, end, min_rsme=1e-4):
     t : numpy array of times in seconds
     start : start of time window for exponential fit
     end : end of time window for exponential fit
-    min_rsme: minimal acceptable root mean square error (default 1e-4)
+    min_rsme: maximum acceptable root mean square error (default 1e-4)
 
     Returns
     -------
@@ -922,7 +922,7 @@ def fit_membrane_time_constant(v, t, start, end, min_rsme=1e-4):
         return np.nan, np.nan, np.nan
 
     pred = _exp_curve(t_window, *popt)
-    rsme = np.sqrt(np.mean(pred - v_window))
+    rsme = np.sqrt(np.mean(np.square(pred - v_window)))
     if rsme > min_rsme:
         logging.debug("Curve fit for membrane time constant did not meet RSME standard")
         return np.nan, np.nan, np.nan

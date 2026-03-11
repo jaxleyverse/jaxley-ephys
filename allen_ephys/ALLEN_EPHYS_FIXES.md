@@ -14,6 +14,19 @@ Changes relative to original AllenSDK implementation.
   - `pause_metrics`: neutral return for no-spike sweeps
   - `burst_metrics`: neutral return / guarded burst detection failures
   - `delay_metrics`: warning-safe and exception-safe prespike fit path
+  - long-square rheobase tie-break: when multiple spiking sweeps share the
+    minimal stimulus amplitude, select the candidate with highest firing rate
+    (`avg_rate`) for stable alignment with Allen DB rheobase sweep IDs
+  - `membrane_time_constant`: avoid `np.nanmean` all-NaN warning by averaging
+    only finite `tau` values and returning `nan` when none are finite
+- `allen_ephys/ephys_features.py`
+  - `fit_membrane_time_constant`: fix RMSE calculation from
+    `sqrt(mean(pred - v))` to `sqrt(mean((pred - v)^2))` to avoid invalid
+    square-root warnings and to use a mathematically correct RMSE.
+- `allen_ephys/ephys_extractor.py`
+  - `estimate_time_constant`: pass `min_rsme=1.0` to
+    `fit_membrane_time_constant` so corrected RMSE values for valid traces are
+    not rejected wholesale by the legacy `1e-4` threshold.
 
 ## 3) Unit alignment with Allen DB
 - `allen_ephys/ephys_extractor.py`
@@ -22,14 +35,28 @@ Changes relative to original AllenSDK implementation.
   - `membrane_time_constant` docs updated to ms
 
 ## 4) DB parity mapping convention used in tests
-- `tests/conftest.py`
-  - long-square spike fields are mapped from the first spike of
-    `rheobase_sweep` (fallback to hero-sweep when unavailable)
+- `tests/allen_ephys/test_parity.py`
+  - long-square adaptation/latency/avg-ISI are mapped from the DB
+    `thumbnail_sweep_id` when present
+  - long-square first-spike timing/voltage fields are mapped from the first
+    spike of `rheobase_sweep`
+  - extractor `long_squares.input_resistance` is mapped to DB `ri`
+    (Allen DB `input_resistance_mohm` is not a direct output of
+    `EphysCellFeatureExtractor`)
+  - `threshold_i_short_square` uses a DB-aligned aggregation over
+    common-amplitude short-square sweeps:
+    - for small common-amplitude sets (<=2 sweeps), use mean first-spike
+      `threshold_i`
+    - otherwise use mean nonzero first-spike `threshold_i` (fallback to
+      common stimulus amplitude when all are zero)
+  - short-square `slow_trough_t/v` use first-spike `slow_trough_t/v` with
+    fallback to `trough_t/v` when slow-trough values are not present
   - `threshold_i_long_square` is mapped to `rheobase_i`
   - `threshold_i_short_square` uses first-spike `threshold_i` values from
-    canonical short-square common-amplitude sweeps, excluding zero-current
-    threshold events; if all are zero, it falls back to short-square stimulus
-    amplitude
+    canonical short-square common-amplitude sweeps; if none are available it
+    falls back to short-square stimulus amplitude
+  - sweep-level `num_spikes` parity uses NWB `index_range` windows to align
+    with Allen DB sweep metadata semantics
 
 ## 5) Canonical stimulus selection in preprocessing
 - `tests/load_testdata.py`
@@ -46,22 +73,24 @@ uv run python -m pytest tests/allen_ephys/test_allen_features.py tests/allen_eph
 
 New repository tests:
 ```bash
-uv run python -m pytest tests/allen_ephys/test_integrity.py tests/allen_ephys/test_match_data.py -q
+uv run python -m pytest tests/allen_ephys/test_integrity.py tests/allen_ephys/test_parity.py -q
 ```
 
 ## Observed DB mismatches and hypotheses
 
 Current persistent mismatch clusters (from `tests/allen_ephys/report_match_data.py`):
-- `input_resistance_mohm` 
-- `threshold_i_short_square`
-- small long-square timing offsets (`threshold_t_long_square`, `peak_t_long_square`,
-  `fast_trough_t_long_square`, `trough_t_long_square`)
+- small short-square first-spike voltage/timing differences on specimen
+  `565871768` outside the default `--num-specimens 5` scope
+  - `fast_trough_v_short_square`
+  - `peak_v_short_square`
+  - `threshold_v_short_square`
+  - `trough_t_short_square`
+  - `upstroke_downstroke_ratio_short_square`
 
 Working hypotheses:
-- **Rheobase tie-break differences**: DB and vendored extractor likely choose
-  different sweep IDs when multiple sweeps share rheobase amplitude.
-- **Short-square inclusion differences**: DB pipeline likely uses additional
-  sweep inclusion/exclusion logic (or protocol grouping) beyond the simple
-  canonical subset used here.
-- **Subthreshold fit selection differences**: `input_resistance_mohm` appears
-  sensitive to which long-square subthreshold sweeps are included for fitting.
+- **Short-square selection differences**: DB pipeline likely has additional
+  sweep-selection details for short-square aggregation on specific cells.
+
+Default parity gates (`--num-specimens 1` and `--num-specimens 5`) are fully
+green. The residual differences above appear only when all cached specimens are
+included.

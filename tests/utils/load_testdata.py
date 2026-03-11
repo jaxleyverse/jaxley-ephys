@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Download and cache Allen NWB fixtures for deterministic tests.
 
-This script stores only AllenSDK-native cache artifacts under `tests/data/allen_cache`:
+This script stores only AllenSDK-native cache artifacts under `tests/testdata/allen_cache`:
 
 - `cell_types_manifest.json`
 - `cells.json`
@@ -35,7 +35,7 @@ DEFAULT_CELL_IDS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download/cached Allen NWB fixtures for selected specimen IDs."
+        description="Download and cache Allen NWB fixtures for selected specimen IDs."
     )
     parser.add_argument(
         "--cell-ids",
@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cache-dir",
         type=Path,
-        default=Path("tests/data/allen_cache"),
+        default=Path("tests/testdata/allen_cache"),
         help="Root directory for AllenSDK cache artifacts.",
     )
     parser.add_argument(
