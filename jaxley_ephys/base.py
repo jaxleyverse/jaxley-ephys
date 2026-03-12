@@ -148,6 +148,193 @@ def _next_valid_or_default(values: Array, valid: Array, default: Array) -> Array
     return jnp.where(shifted_valid, shifted_values, default)
 
 
+def _detect_putative_spikes(
+    dvdt: Array,
+    start_idx: Array,
+    end_idx: Array,
+    max_spikes: int,
+    dv_cutoff: float,
+) -> tuple[Array, Array, Array]:
+    t_len = dvdt.shape[0]
+    ge = dvdt >= dv_cutoff
+    crossing_pos = jnp.arange(t_len - 1)
+    crossing_mask = (~ge[:-1]) & ge[1:]
+    crossing_in_window = (
+        crossing_mask
+        & (crossing_pos >= start_idx)
+        & (crossing_pos <= end_idx)
+        & (start_idx < end_idx)
+    )
+    overflow = jnp.sum(crossing_in_window) > max_spikes
+
+    crossings = jnp.where(crossing_mask, size=max_spikes, fill_value=-1)[0]
+    in_window = (
+        (crossings >= start_idx) & (crossings <= end_idx) & (start_idx < end_idx)
+    )
+    spike_idx = jnp.where(in_window, crossings, -1)
+    spike_valid = spike_idx >= 0
+    return spike_idx, spike_valid, overflow
+
+
+def _find_peak_indexes(
+    v: Array,
+    spike_idx: Array,
+    spike_valid: Array,
+    end_idx: Array,
+) -> tuple[Array, Array]:
+    max_spikes = spike_idx.shape[0]
+    t_len = v.shape[0]
+    x = jnp.arange(t_len)
+    next_spike = _next_valid_or_default(spike_idx, spike_valid, end_idx)
+
+    def peak_for(k: Array) -> Array:
+        s = spike_idx[k]
+        n = next_spike[k]
+        valid = spike_valid[k] & (n > s)
+        m = valid & (x >= s) & (x < n)
+        vals = jnp.where(m, v, -jnp.inf)
+        return jnp.where(valid, jnp.argmax(vals), -1)
+
+    peak_idx = jax.vmap(peak_for)(jnp.arange(max_spikes))
+    peak_valid = peak_idx >= 0
+    return peak_idx, peak_valid
+
+
+def _filter_putative_spikes(
+    v: Array,
+    spike_idx: Array,
+    spike_valid: Array,
+    peak_idx: Array,
+    peak_valid: Array,
+    min_height: float,
+    min_peak: float,
+) -> tuple[Array, Array, Array, Array]:
+    peak_v = _masked_take(v, peak_idx, peak_valid, fill=-jnp.inf)
+    spike_v = _masked_take(v, spike_idx, spike_valid, fill=jnp.inf)
+    keep = spike_valid & peak_valid
+    keep = keep & (peak_v >= min_peak)
+    keep = keep & ((peak_v - spike_v) >= min_height)
+    spike_idx, spike_valid = _compact(spike_idx, keep)
+    peak_idx, peak_valid = _compact(peak_idx, keep)
+    return spike_idx, spike_valid, peak_idx, peak_valid
+
+
+def _find_upstroke_indexes(
+    dvdt: Array,
+    spike_idx: Array,
+    spike_valid: Array,
+    peak_idx: Array,
+    peak_valid: Array,
+) -> tuple[Array, Array]:
+    max_spikes = spike_idx.shape[0]
+    t_len = dvdt.shape[0]
+    x = jnp.arange(t_len)
+
+    def upstroke_for(k: Array) -> Array:
+        s = spike_idx[k]
+        p = peak_idx[k]
+        valid = spike_valid[k] & peak_valid[k] & (p > s)
+        m = valid & (x >= s) & (x < p)
+        vals = jnp.where(m, dvdt, -jnp.inf)
+        return jnp.where(valid, jnp.argmax(vals), -1)
+
+    upstroke_idx = jax.vmap(upstroke_for)(jnp.arange(max_spikes))
+    up_valid = upstroke_idx >= 0
+    return upstroke_idx, up_valid
+
+
+def _refine_threshold_indexes(
+    dvdt: Array,
+    upstroke_idx: Array,
+    up_valid: Array,
+    thresh_frac: float = 0.05,
+) -> tuple[Array, Array]:
+    max_spikes = upstroke_idx.shape[0]
+    t_len = dvdt.shape[0]
+    x = jnp.arange(t_len)
+    xr = x[::-1]
+    up_vals = _masked_take(dvdt, upstroke_idx, up_valid, fill=jnp.nan)
+    avg_up = jnp.nanmean(up_vals)
+    target = avg_up * thresh_frac
+    prev_up = jnp.concatenate([jnp.asarray([0]), upstroke_idx[:-1]])
+
+    def threshold_for(k: Array) -> Array:
+        u = upstroke_idx[k]
+        p = prev_up[k]
+        valid = up_valid[k] & (u > p)
+        m = valid & (xr <= u) & (xr > p)
+        cand = jnp.where(m & (dvdt[xr] <= target), xr, -1)
+        best = jnp.max(cand)
+        return jnp.where(best >= 0, best, p)
+
+    threshold_idx = jax.vmap(threshold_for)(jnp.arange(max_spikes))
+    threshold_valid = up_valid
+    return threshold_idx, threshold_valid
+
+
+def _check_thresholds_and_peaks(
+    t: Array,
+    v: Array,
+    threshold_idx: Array,
+    threshold_valid: Array,
+    peak_idx: Array,
+    peak_valid: Array,
+    end_idx: Array,
+    max_interval: float = 0.005,
+) -> tuple[Array, Array, Array, Array, Array]:
+    max_spikes = threshold_idx.shape[0]
+    t_len = t.shape[0]
+    x = jnp.arange(t_len)
+
+    peak_t = _masked_take(t, peak_idx, peak_valid, fill=jnp.inf)
+    threshold_t = _masked_take(t, threshold_idx, threshold_valid, fill=-jnp.inf)
+    pair_ok = threshold_valid & peak_valid & ((peak_t - threshold_t) < max_interval)
+    threshold_idx, threshold_valid = _compact(threshold_idx, pair_ok)
+    peak_idx, peak_valid = _compact(peak_idx, pair_ok)
+
+    valid_pair = peak_valid & threshold_valid
+    n_valid = jnp.sum(valid_pair)
+    last_idx = jnp.maximum(n_valid - 1, 0)
+    p_last = peak_idx[last_idx]
+    th_last = threshold_idx[last_idx]
+    returned = jnp.any(
+        (x >= p_last)
+        & (x <= end_idx)
+        & (v <= (v[jnp.maximum(th_last, 0)] + 1.0))
+    )
+    clipped_last = (n_valid > 0) & (~returned)
+    clipped = jnp.zeros((max_spikes,), dtype=bool).at[last_idx].set(clipped_last)
+
+    return threshold_idx, threshold_valid, peak_idx, peak_valid, clipped
+
+
+def _find_trough_indexes(
+    v: Array,
+    peak_idx: Array,
+    peak_valid: Array,
+    threshold_idx: Array,
+    threshold_valid: Array,
+    clipped: Array,
+    end_idx: Array,
+) -> tuple[Array, Array]:
+    max_spikes = peak_idx.shape[0]
+    t_len = v.shape[0]
+    x = jnp.arange(t_len)
+    next_thr = _next_valid_or_default(threshold_idx, threshold_valid, end_idx)
+
+    def trough_for(k: Array) -> Array:
+        p = peak_idx[k]
+        n = next_thr[k]
+        valid = peak_valid[k] & (n > p) & (~clipped[k])
+        m = valid & (x >= p) & (x < n)
+        vals = jnp.where(m, v, jnp.inf)
+        return jnp.where(valid, jnp.argmin(vals), -1)
+
+    trough_idx = jax.vmap(trough_for)(jnp.arange(max_spikes))
+    trough_valid = trough_idx >= 0
+    return trough_idx, trough_valid
+
+
 def detect_events(
     t: Array,
     v: Array,
@@ -161,10 +348,7 @@ def detect_events(
     threshold_cutoff: float = 20.0,
     peak_cutoff: float = -30.0,
     trough_cutoff: float = 2.0,
-    **kwargs,
 ) -> Events:
-    del kwargs
-
     if t.ndim != 1 or v.ndim != 1 or i.ndim != 1:
         raise ValueError("detect_events expects 1D t, v, i")
     if not (t.shape[0] == v.shape[0] == i.shape[0]):
@@ -177,112 +361,73 @@ def detect_events(
     start_idx = _first_index_at_or_after(t, t0)
     end_idx = _first_index_at_or_after(t, t1)
 
+    # 1) dv/dt and putative spike detection.
     dvdt = (
         compute_dvdt(t, v, filter=dvdt_filter)
         if dvdt is None
         else dvdt
     )
 
-    ge = dvdt >= threshold_cutoff
-    crossing_pos = jnp.arange(T - 1)
-    crossing_mask = (~ge[:-1]) & ge[1:]
-    crossing_in_window = (
-        crossing_mask
-        & (crossing_pos >= start_idx)
-        & (crossing_pos <= end_idx)
-        & (start_idx < end_idx)
+    spike_idx, spike_valid, crossing_overflow = _detect_putative_spikes(
+        dvdt,
+        start_idx,
+        end_idx,
+        max_spikes,
+        threshold_cutoff,
     )
-    crossing_overflow = jnp.sum(crossing_in_window) > max_spikes
 
-    crossings = jnp.where((~ge[:-1]) & ge[1:], size=max_spikes, fill_value=-1)[0]
-    in_window = (
-        (crossings >= start_idx) & (crossings <= end_idx) & (start_idx < end_idx)
+    # 2) Peak detection and putative spike filtering.
+    peak_idx, peak_valid = _find_peak_indexes(v, spike_idx, spike_valid, end_idx)
+    spike_idx, spike_valid, peak_idx, peak_valid = _filter_putative_spikes(
+        v,
+        spike_idx,
+        spike_valid,
+        peak_idx,
+        peak_valid,
+        trough_cutoff,
+        peak_cutoff,
     )
-    spike_idx = jnp.where(in_window, crossings, -1)
-    spike_valid = spike_idx >= 0
 
-    next_spike = _next_valid_or_default(spike_idx, spike_valid, end_idx)
-
-    def peak_for(k: Array) -> Array:
-        s = spike_idx[k]
-        n = next_spike[k]
-        valid = spike_valid[k] & (n > s)
-        m = valid & (x >= s) & (x < n)
-        vals = jnp.where(m, v, -jnp.inf)
-        return jnp.where(valid, jnp.argmax(vals), -1)
-
-    peak_idx = jax.vmap(peak_for)(jnp.arange(max_spikes))
-    peak_valid = peak_idx >= 0
-
-    peak_v = _masked_take(v, peak_idx, peak_valid, fill=-jnp.inf)
-    spike_v = _masked_take(v, spike_idx, spike_valid, fill=jnp.inf)
-    keep = spike_valid & peak_valid
-    keep = keep & (peak_v >= peak_cutoff)
-    keep = keep & ((peak_v - spike_v) >= trough_cutoff)
-    spike_idx, spike_valid = _compact(spike_idx, keep)
-    peak_idx, peak_valid = _compact(peak_idx, keep)
-
-    def upstroke_for(k: Array) -> Array:
-        s = spike_idx[k]
-        p = peak_idx[k]
-        valid = spike_valid[k] & peak_valid[k] & (p > s)
-        m = valid & (x >= s) & (x < p)
-        vals = jnp.where(m, dvdt, -jnp.inf)
-        return jnp.where(valid, jnp.argmax(vals), -1)
-
-    upstroke_idx = jax.vmap(upstroke_for)(jnp.arange(max_spikes))
-    up_valid = upstroke_idx >= 0
-    up_vals = _masked_take(dvdt, upstroke_idx, up_valid, fill=jnp.nan)
-    avg_up = jnp.nanmean(up_vals)
-    target = avg_up * 0.05
-
-    prev_up = jnp.concatenate([jnp.asarray([0]), upstroke_idx[:-1]])
-    xr = x[::-1]
-
-    def threshold_for(k: Array) -> Array:
-        u = upstroke_idx[k]
-        p = prev_up[k]
-        valid = up_valid[k] & (u > p)
-        m = valid & (xr <= u) & (xr > p)
-        cand = jnp.where(m & (dvdt[xr] <= target), xr, -1)
-        best = jnp.max(cand)
-        return jnp.where(best >= 0, best, p)
-
-    threshold_idx = jax.vmap(threshold_for)(jnp.arange(max_spikes))
-    threshold_valid = spike_valid
-
-    peak_t = _masked_take(t, peak_idx, peak_valid, fill=jnp.inf)
-    threshold_t = _masked_take(t, threshold_idx, threshold_valid, fill=-jnp.inf)
-    pair_ok = threshold_valid & peak_valid & ((peak_t - threshold_t) < 0.005)
-    threshold_idx, threshold_valid = _compact(threshold_idx, pair_ok)
-    peak_idx, peak_valid = _compact(peak_idx, pair_ok)
-
-    valid_pair = peak_valid & threshold_valid
-    n_valid = jnp.sum(valid_pair)
-    last_idx = jnp.maximum(n_valid - 1, 0)
-    p_last = peak_idx[last_idx]
-    th_last = threshold_idx[last_idx]
-    tol = 1.0
-    returned = jnp.any(
-        (x >= p_last)
-        & (x <= end_idx)
-        & (v <= (v[jnp.maximum(th_last, 0)] + tol))
+    # 3) Upstroke detection and threshold refinement.
+    upstroke_idx, up_valid = _find_upstroke_indexes(
+        dvdt,
+        spike_idx,
+        spike_valid,
+        peak_idx,
+        peak_valid,
     )
-    clipped_last = (n_valid > 0) & (~returned)
-    clipped = jnp.zeros((max_spikes,), dtype=bool).at[last_idx].set(clipped_last)
+    threshold_idx, threshold_valid = _refine_threshold_indexes(
+        dvdt,
+        upstroke_idx,
+        up_valid,
+        0.05,
+    )
+    threshold_valid = threshold_valid & spike_valid
 
-    next_thr = _next_valid_or_default(threshold_idx, threshold_valid, end_idx)
+    # 4) Threshold/peak consistency checks and clipped final-spike handling.
+    threshold_idx, threshold_valid, peak_idx, peak_valid, clipped = (
+        _check_thresholds_and_peaks(
+            t,
+            v,
+            threshold_idx,
+            threshold_valid,
+            peak_idx,
+            peak_valid,
+            end_idx,
+            0.005,
+        )
+    )
 
-    def trough_for(k: Array) -> Array:
-        p = peak_idx[k]
-        n = next_thr[k]
-        valid = peak_valid[k] & (n > p) & (~clipped[k])
-        m = valid & (x >= p) & (x < n)
-        vals = jnp.where(m, v, jnp.inf)
-        return jnp.where(valid, jnp.argmin(vals), -1)
-
-    trough_idx = jax.vmap(trough_for)(jnp.arange(max_spikes))
-    trough_valid = trough_idx >= 0
+    # 5) Trough detection.
+    trough_idx, trough_valid = _find_trough_indexes(
+        v,
+        peak_idx,
+        peak_valid,
+        threshold_idx,
+        threshold_valid,
+        clipped,
+        end_idx,
+    )
 
     threshold_idx = jnp.where(threshold_valid, threshold_idx, -1)
     peak_idx = jnp.where(peak_valid, peak_idx, -1)
