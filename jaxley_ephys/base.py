@@ -40,12 +40,7 @@ class Events:
         *,
         max_spikes: int = 128,
     ) -> Events:
-        spikes = spikes.astype(jnp.int32)
-        thresholds = thresholds.astype(jnp.bool_)
-        peaks = peaks.astype(jnp.bool_)
-        troughs = troughs.astype(jnp.bool_)
-
-        n_spikes = jnp.maximum(jnp.max(spikes) + 1, 0).astype(jnp.int32)
+        n_spikes = jnp.maximum(jnp.max(spikes) + 1, 0)
         n_thresholds = jnp.sum(thresholds)
         n_peaks = jnp.sum(peaks)
         n_troughs = jnp.sum(troughs)
@@ -72,44 +67,62 @@ class Events:
             troughs=troughs,
             n_spikes=n_spikes,
             overflow=overflow,
-            threshold_idxs=threshold_idxs.astype(jnp.int32),
-            peak_idxs=peak_idxs.astype(jnp.int32),
-            trough_idxs=trough_idxs.astype(jnp.int32),
+            threshold_idxs=threshold_idxs,
+            peak_idxs=peak_idxs,
+            trough_idxs=trough_idxs,
             threshold_valid=threshold_valid,
             peak_valid=peak_valid,
             trough_valid=trough_valid,
         )
 
 
-def compute_dvdt(t: Array, v: Array, *, filter: float | None = None) -> Array:
+def _smooth5(v: Array) -> Array:
+    kernel = jnp.asarray([1.0, 2.0, 3.0, 2.0, 1.0])
+    kernel = kernel / jnp.sum(kernel)
+    return jnp.convolve(v, kernel, mode="same")
+
+
+def compute_dvdt(
+    t: Array,
+    v: Array,
+    *,
+    filter: float | None = None,
+    poles: int = 4,
+) -> Array:
     if t.ndim != 1 or v.ndim != 1 or t.shape[0] != v.shape[0]:
         raise ValueError("compute_dvdt expects 1D aligned t and v")
     if t.shape[0] < 2:
         return jnp.full(t.shape, jnp.nan)
 
-    tracing = isinstance(t, jax.core.Tracer) or isinstance(v, jax.core.Tracer)
-
     if filter is None:
-        dv = jnp.diff(v)
+        v_used = v
     else:
+        tracing = isinstance(t, jax.core.Tracer) or isinstance(v, jax.core.Tracer)
         if tracing:
-            kernel = jnp.asarray([1.0, 2.0, 3.0, 2.0, 1.0], dtype=jnp.float32)
-            kernel = kernel / jnp.sum(kernel)
-            v_used = jnp.convolve(v.astype(jnp.float32), kernel, mode="same")
+            dt = jnp.diff(t)
+            fixed_dt = jnp.all(jnp.isclose(dt, dt[0], rtol=1e-3, atol=1e-9))
+            sample_freq = 1.0 / dt[0]
+            filt_coeff = (filter * 1e3) / (sample_freq / 2.0)
+            valid_coeff = (filt_coeff >= 0) & (filt_coeff < 1)
+            use_bessel = fixed_dt & valid_coeff
+            v_used = jax.lax.cond(
+                use_bessel,
+                lambda _: allen_bessel_sosfiltfilt(v, t, cutoff_khz=filter, poles=poles),
+                lambda _: _smooth5(v),
+                operand=None,
+            )
         else:
             t_np = np.asarray(t, dtype=np.float64)
             dt0 = float(t_np[1] - t_np[0])
-            fixed_dt = np.allclose(np.diff(t_np), dt0)
+            fixed_dt = bool(np.allclose(np.diff(t_np), dt0))
             sample_freq = 1.0 / dt0
             filt_coeff = (filter * 1e3) / (sample_freq / 2.0)
-            if fixed_dt and 0 <= filt_coeff < 1:
-                v_used = allen_bessel_sosfiltfilt(v, t, cutoff_khz=filter)
+            if fixed_dt and (0 <= filt_coeff < 1):
+                v_used = allen_bessel_sosfiltfilt(v, t, cutoff_khz=filter, poles=poles)
             else:
-                kernel = jnp.asarray([1.0, 2.0, 3.0, 2.0, 1.0], dtype=jnp.float32)
-                kernel = kernel / jnp.sum(kernel)
-                v_used = jnp.convolve(v.astype(jnp.float32), kernel, mode="same")
+                v_used = _smooth5(v)
 
-        dv = jnp.diff(v_used)
+    dv = jnp.diff(v_used)
 
     dt = jnp.diff(t)
     short = jnp.where(dt != 0.0, 1e-3 * dv / dt, jnp.nan)
@@ -120,7 +133,7 @@ def compute_dvdt(t: Array, v: Array, *, filter: float | None = None) -> Array:
 def _first_index_at_or_after(t: Array, t0: float | Array) -> Array:
     mask = t >= t0
     idx = jnp.argmax(mask)
-    return jnp.where(jnp.any(mask), idx, t.shape[0] - 1).astype(jnp.int32)
+    return jnp.where(jnp.any(mask), idx, t.shape[0] - 1)
 
 
 def _compact(values: Array, valid: Array) -> tuple[Array, Array]:
@@ -130,7 +143,7 @@ def _compact(values: Array, valid: Array) -> tuple[Array, Array]:
     n_valid = jnp.sum(valid)
     sorted_valid = jnp.arange(n) < n_valid
     sorted_vals = jnp.where(sorted_valid, sorted_vals, -1)
-    return sorted_vals.astype(jnp.int32), sorted_valid
+    return sorted_vals, sorted_valid
 
 
 def _masked_take(values: Array, idx: Array, valid: Array, fill: float) -> Array:
@@ -144,9 +157,7 @@ def _indices_to_mask(length: int, idx: Array) -> Array:
 
 
 def _next_valid_or_default(values: Array, valid: Array, default: Array) -> Array:
-    shifted_values = jnp.concatenate(
-        [values[1:], jnp.asarray([default], dtype=values.dtype)]
-    )
+    shifted_values = jnp.concatenate([values[1:], jnp.asarray([default])])
     shifted_valid = jnp.concatenate([valid[1:], jnp.asarray([False])])
     return jnp.where(shifted_valid, shifted_values, default)
 
@@ -161,28 +172,13 @@ def detect_events(
     dvdt: Optional[Array] = None,
     max_spikes: int = 100,
     dvdt_filter: float | None = 10.0,
+    dvdt_poles: int = 4,
     threshold_cutoff: float = 20.0,
     peak_cutoff: float = -30.0,
     trough_cutoff: float = 2.0,
     **kwargs,
 ) -> Events:
     del kwargs
-
-    tracing = (
-        isinstance(t, jax.core.Tracer)
-        or isinstance(v, jax.core.Tracer)
-        or isinstance(i, jax.core.Tracer)
-    )
-
-    if tracing:
-        t = jnp.asarray(t)
-        v = jnp.asarray(v)
-        i = jnp.asarray(i)
-    else:
-        with jax.enable_x64(True):
-            t = jnp.asarray(t, dtype=jnp.float64)
-            v = jnp.asarray(v, dtype=jnp.float64)
-            i = jnp.asarray(i, dtype=jnp.float64)
 
     if t.ndim != 1 or v.ndim != 1 or i.ndim != 1:
         raise ValueError("detect_events expects 1D t, v, i")
@@ -196,10 +192,14 @@ def detect_events(
     start_idx = _first_index_at_or_after(t, t0)
     end_idx = _first_index_at_or_after(t, t1)
 
-    dvdt = compute_dvdt(t, v, filter=dvdt_filter) if dvdt is None else dvdt
+    dvdt = (
+        compute_dvdt(t, v, filter=dvdt_filter, poles=dvdt_poles)
+        if dvdt is None
+        else dvdt
+    )
 
     ge = dvdt >= threshold_cutoff
-    crossing_pos = jnp.arange(T - 1, dtype=jnp.int32)
+    crossing_pos = jnp.arange(T - 1)
     crossing_mask = (~ge[:-1]) & ge[1:]
     crossing_in_window = (
         crossing_mask
@@ -213,7 +213,7 @@ def detect_events(
     in_window = (
         (crossings >= start_idx) & (crossings <= end_idx) & (start_idx < end_idx)
     )
-    spike_idx = jnp.where(in_window, crossings, -1).astype(jnp.int32)
+    spike_idx = jnp.where(in_window, crossings, -1)
     spike_valid = spike_idx >= 0
 
     next_spike = _next_valid_or_default(spike_idx, spike_valid, end_idx)
@@ -226,7 +226,7 @@ def detect_events(
         vals = jnp.where(m, v, -jnp.inf)
         return jnp.where(valid, jnp.argmax(vals), -1)
 
-    peak_idx = jax.vmap(peak_for)(jnp.arange(max_spikes)).astype(jnp.int32)
+    peak_idx = jax.vmap(peak_for)(jnp.arange(max_spikes))
     peak_valid = peak_idx >= 0
 
     peak_v = _masked_take(v, peak_idx, peak_valid, fill=-jnp.inf)
@@ -245,13 +245,13 @@ def detect_events(
         vals = jnp.where(m, dvdt, -jnp.inf)
         return jnp.where(valid, jnp.argmax(vals), -1)
 
-    upstroke_idx = jax.vmap(upstroke_for)(jnp.arange(max_spikes)).astype(jnp.int32)
+    upstroke_idx = jax.vmap(upstroke_for)(jnp.arange(max_spikes))
     up_valid = upstroke_idx >= 0
     up_vals = _masked_take(dvdt, upstroke_idx, up_valid, fill=jnp.nan)
     avg_up = jnp.nanmean(up_vals)
     target = avg_up * 0.05
 
-    prev_up = jnp.concatenate([jnp.asarray([0], dtype=jnp.int32), upstroke_idx[:-1]])
+    prev_up = jnp.concatenate([jnp.asarray([0]), upstroke_idx[:-1]])
     xr = x[::-1]
 
     def threshold_for(k: Array) -> Array:
@@ -263,7 +263,7 @@ def detect_events(
         best = jnp.max(cand)
         return jnp.where(best >= 0, best, p)
 
-    threshold_idx = jax.vmap(threshold_for)(jnp.arange(max_spikes)).astype(jnp.int32)
+    threshold_idx = jax.vmap(threshold_for)(jnp.arange(max_spikes))
     threshold_valid = spike_valid
 
     peak_t = _masked_take(t, peak_idx, peak_valid, fill=jnp.inf)
@@ -284,7 +284,7 @@ def detect_events(
         & (v <= (v[jnp.maximum(th_last, 0)] + tol))
     )
     clipped_last = (n_valid > 0) & (~returned)
-    clipped = jnp.zeros((max_spikes,), dtype=jnp.bool_).at[last_idx].set(clipped_last)
+    clipped = jnp.zeros((max_spikes,), dtype=bool).at[last_idx].set(clipped_last)
 
     next_thr = _next_valid_or_default(threshold_idx, threshold_valid, end_idx)
 
@@ -296,7 +296,7 @@ def detect_events(
         vals = jnp.where(m, v, jnp.inf)
         return jnp.where(valid, jnp.argmin(vals), -1)
 
-    trough_idx = jax.vmap(trough_for)(jnp.arange(max_spikes)).astype(jnp.int32)
+    trough_idx = jax.vmap(trough_for)(jnp.arange(max_spikes))
     trough_valid = trough_idx >= 0
 
     threshold_idx = jnp.where(threshold_valid, threshold_idx, -1)
@@ -311,7 +311,7 @@ def detect_events(
     th = jnp.where(threshold_valid, threshold_idx, -1)
     eligible = (th[None, :] <= x[:, None]) & threshold_valid[None, :]
     th_vals = jnp.where(eligible, th[None, :], -1)
-    k_latest = jnp.argmax(th_vals, axis=1).astype(jnp.int32)
+    k_latest = jnp.argmax(th_vals, axis=1)
     has = jnp.any(eligible, axis=1)
     spike_labels = jnp.where(has, k_latest, -1)
 
