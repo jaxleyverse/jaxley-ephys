@@ -169,6 +169,19 @@ Goal: Add repeatable performance regression tests, then optimize safely against 
 Exit criteria:
 - Performance regressions are automatically detected and optimization work is gated by correctness + benchmark checks.
 
+## Subgoal 12 - Feature diagnostics toolkit
+Goal: Add diagnostics utilities for feature-level introspection and debugging after regression benchmarking is in place.
+
+- [ ] Create diagnostics package layout under `jaxley_ephys/diagnostics/`
+- [ ] Add per-feature diagnostics helpers for spike/sweep/sweepset outputs
+- [ ] Add Allen-vs-JAX diagnostic comparators that report mismatch locations and magnitudes
+- [ ] Add plotting/export helpers for event markers and feature traces on representative sweeps
+- [ ] Add tests for diagnostics APIs and expected report structure
+- [ ] Document diagnostics usage in developer-facing docs/tests
+
+Exit criteria:
+- Diagnostics APIs make parity and regression failures easier to localize and explain, with tested outputs.
+
 ## Progress Notes
 - 2026-03-03: Plan initialized and linked from `AGENTS.md`. No implementation subgoal started yet.
 - 2026-03-03: Subgoal 1 completed. Added `tests/load_testdata.py`, added cache ignore rule, and smoke-tested cache generation for specimen `525011903`.
@@ -196,3 +209,4 @@ Exit criteria:
 - 2026-03-12: Extended JAX Bessel design/filtering to support configurable order (`poles`) in [1, 10] and wired `detect_events`/`compute_dvdt` to pass through filter order (`dvdt_poles`). Simplified `Events.from_masks` dtype handling (removed in-method casts) and added detect-events jit/vmap checks in `tests/test_integrity.py`. Revalidated with targeted suites: `tests/test_bessel.py`, `tests/test_event_detection.py`, and detect-events integrity nodes.
 - 2026-03-12: Cleanup pass: removed backward-compat shims in `jaxley_ephys` (including `bessel4_lowpass_sos` alias and extra detect-events pole plumbing), removed runtime NumPy dependency from `jaxley_ephys/base.py`, and centralized test-time `jax_enable_x64` in `tests/conftest.py` with rationale comment. Also deduplicated detect-events jit/vmap tests in `tests/test_event_detection.py`.
 - 2026-03-12: Refactored `detect_events` structure in `jaxley_ephys/base.py` into Allen-style pipeline helpers (`_detect_putative_spikes`, `_find_peak_indexes`, `_filter_putative_spikes`, `_find_upstroke_indexes`, `_refine_threshold_indexes`, `_check_thresholds_and_peaks`, `_find_trough_indexes`) with clear stage comments to improve readability while preserving parity and jit/vmap behavior. Verified with `tests/test_event_detection.py` and `tests/test_bessel.py`.
+- 2026-03-12: Added Subgoal 12 to plan post-regression diagnostics work (`jaxley_ephys/diagnostics`) for feature-level debugging and mismatch analysis.
