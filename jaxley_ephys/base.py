@@ -4,8 +4,11 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 from typing import Optional
+
+from .bessel import allen_bessel_sosfiltfilt
 
 
 @jax.tree_util.register_dataclass
@@ -84,17 +87,34 @@ def compute_dvdt(t: Array, v: Array, *, filter: float | None = None) -> Array:
     if t.shape[0] < 2:
         return jnp.full(t.shape, jnp.nan)
 
-    v_used = v
-    if filter is not None:
-        kernel = jnp.asarray([1.0, 2.0, 3.0, 2.0, 1.0], dtype=jnp.float32)
-        kernel = kernel / jnp.sum(kernel)
-        v_used = jnp.convolve(v.astype(jnp.float32), kernel, mode="same")
+    tracing = isinstance(t, jax.core.Tracer) or isinstance(v, jax.core.Tracer)
 
-    dv = jnp.diff(v_used)
+    if filter is None:
+        dv = jnp.diff(v)
+    else:
+        if tracing:
+            kernel = jnp.asarray([1.0, 2.0, 3.0, 2.0, 1.0], dtype=jnp.float32)
+            kernel = kernel / jnp.sum(kernel)
+            v_used = jnp.convolve(v.astype(jnp.float32), kernel, mode="same")
+        else:
+            t_np = np.asarray(t, dtype=np.float64)
+            dt0 = float(t_np[1] - t_np[0])
+            fixed_dt = np.allclose(np.diff(t_np), dt0)
+            sample_freq = 1.0 / dt0
+            filt_coeff = (filter * 1e3) / (sample_freq / 2.0)
+            if fixed_dt and 0 <= filt_coeff < 1:
+                v_used = allen_bessel_sosfiltfilt(v, t, cutoff_khz=filter)
+            else:
+                kernel = jnp.asarray([1.0, 2.0, 3.0, 2.0, 1.0], dtype=jnp.float32)
+                kernel = kernel / jnp.sum(kernel)
+                v_used = jnp.convolve(v.astype(jnp.float32), kernel, mode="same")
+
+        dv = jnp.diff(v_used)
+
     dt = jnp.diff(t)
     short = jnp.where(dt != 0.0, 1e-3 * dv / dt, jnp.nan)
     out = jnp.full(t.shape, jnp.nan)
-    return out.at[1:].set(short)
+    return out.at[:-1].set(short)
 
 
 def _first_index_at_or_after(t: Array, t0: float | Array) -> Array:
@@ -147,6 +167,22 @@ def detect_events(
     **kwargs,
 ) -> Events:
     del kwargs
+
+    tracing = (
+        isinstance(t, jax.core.Tracer)
+        or isinstance(v, jax.core.Tracer)
+        or isinstance(i, jax.core.Tracer)
+    )
+
+    if tracing:
+        t = jnp.asarray(t)
+        v = jnp.asarray(v)
+        i = jnp.asarray(i)
+    else:
+        with jax.enable_x64(True):
+            t = jnp.asarray(t, dtype=jnp.float64)
+            v = jnp.asarray(v, dtype=jnp.float64)
+            i = jnp.asarray(i, dtype=jnp.float64)
 
     if t.ndim != 1 or v.ndim != 1 or i.ndim != 1:
         raise ValueError("detect_events expects 1D t, v, i")
@@ -236,12 +272,26 @@ def detect_events(
     threshold_idx, threshold_valid = _compact(threshold_idx, pair_ok)
     peak_idx, peak_valid = _compact(peak_idx, pair_ok)
 
+    valid_pair = peak_valid & threshold_valid
+    n_valid = jnp.sum(valid_pair)
+    last_idx = jnp.maximum(n_valid - 1, 0)
+    p_last = peak_idx[last_idx]
+    th_last = threshold_idx[last_idx]
+    tol = 1.0
+    returned = jnp.any(
+        (x >= p_last)
+        & (x <= end_idx)
+        & (v <= (v[jnp.maximum(th_last, 0)] + tol))
+    )
+    clipped_last = (n_valid > 0) & (~returned)
+    clipped = jnp.zeros((max_spikes,), dtype=jnp.bool_).at[last_idx].set(clipped_last)
+
     next_thr = _next_valid_or_default(threshold_idx, threshold_valid, end_idx)
 
     def trough_for(k: Array) -> Array:
         p = peak_idx[k]
         n = next_thr[k]
-        valid = peak_valid[k] & (n > p)
+        valid = peak_valid[k] & (n > p) & (~clipped[k])
         m = valid & (x >= p) & (x < n)
         vals = jnp.where(m, v, jnp.inf)
         return jnp.where(valid, jnp.argmin(vals), -1)

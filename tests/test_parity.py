@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from jaxley_ephys.features import (
@@ -8,75 +7,11 @@ from jaxley_ephys.features import (
     compute_sweep_features,
     compute_sweepset_features,
 )
-
-
-SPIKE_FEATURE_NAMES = (
-    "threshold_index",
-    "clipped",
-    "threshold_t",
-    "threshold_v",
-    "threshold_i",
-    "peak_index",
-    "peak_t",
-    "peak_v",
-    "peak_i",
-    "trough_index",
-    "trough_t",
-    "trough_v",
-    "trough_i",
-    "upstroke_index",
-    "upstroke",
-    "upstroke_t",
-    "upstroke_v",
-    "downstroke_index",
-    "downstroke",
-    "downstroke_t",
-    "downstroke_v",
-    "isi_type",
-    "fast_trough_index",
-    "fast_trough_t",
-    "fast_trough_v",
-    "fast_trough_i",
-    "adp_index",
-    "adp_t",
-    "adp_v",
-    "adp_i",
-    "slow_trough_index",
-    "slow_trough_t",
-    "slow_trough_v",
-    "slow_trough_i",
-    "width",
-    "upstroke_downstroke_ratio",
+from tests.utils.jax_feature_contract import (
+    SPIKE_FEATURE_NAMES,
+    SWEEP_FEATURE_NAMES,
+    assert_feature_equal,
 )
-
-SWEEP_FEATURE_NAMES = (
-    "adapt",
-    "latency",
-    "isi_cv",
-    "mean_isi",
-    "median_isi",
-    "first_isi",
-    "avg_rate",
-)
-
-
-def _assert_feature_equal(expected, computed, *, atol: float = 1e-6, rtol: float = 1e-6):
-    expected_arr = np.asarray(expected)
-    computed_arr = np.asarray(computed)
-
-    assert computed_arr.shape == expected_arr.shape
-
-    if expected_arr.dtype.kind in {"U", "S", "O"}:
-        assert np.array_equal(computed_arr, expected_arr)
-        return
-
-    assert np.allclose(
-        computed_arr.astype(float),
-        expected_arr.astype(float),
-        atol=atol,
-        rtol=rtol,
-        equal_nan=True,
-    )
 
 
 def _long_spiking_sweep(specimen_case):
@@ -106,7 +41,7 @@ def test_jax_spike_feature_matches_vendored_allen(specimen_case, feature_name: s
     )
 
     assert feature_name in computed_map
-    _assert_feature_equal(expected, computed_map[feature_name])
+    assert_feature_equal(expected, computed_map[feature_name])
 
 
 @pytest.mark.parametrize("feature_name", SWEEP_FEATURE_NAMES)
@@ -123,7 +58,7 @@ def test_jax_sweep_feature_matches_vendored_allen(specimen_case, feature_name: s
     )
 
     assert feature_name in computed_map
-    _assert_feature_equal(expected, computed_map[feature_name])
+    assert_feature_equal(expected, computed_map[feature_name])
 
 
 @pytest.mark.parametrize("feature_name", SWEEP_FEATURE_NAMES)
@@ -149,7 +84,7 @@ def test_jax_sweepset_sweep_feature_matches_vendored_allen(
     computed = compute_sweepset_features(t_set, v_set, i_set, start_set, end_set)
     assert "sweep_features" in computed
     assert feature_name in computed["sweep_features"]
-    _assert_feature_equal(expected, computed["sweep_features"][feature_name])
+    assert_feature_equal(expected, computed["sweep_features"][feature_name])
 
 
 @pytest.mark.parametrize("feature_name", SPIKE_FEATURE_NAMES)
@@ -175,4 +110,4 @@ def test_jax_sweepset_spike_feature_average_matches_vendored_allen(
     computed = compute_sweepset_features(t_set, v_set, i_set, start_set, end_set)
     assert "spike_feature_averages" in computed
     assert feature_name in computed["spike_feature_averages"]
-    _assert_feature_equal(expected, computed["spike_feature_averages"][feature_name])
+    assert_feature_equal(expected, computed["spike_feature_averages"][feature_name])

@@ -7,7 +7,9 @@ from tests.utils.allen_dataset import cached_specimen_ids, load_specimen_case
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
+        "--num_specimens",
         "--num-specimens",
+        dest="num_specimens",
         action="store",
         type=int,
         default=1,
@@ -23,7 +25,7 @@ def _limited_specimen_ids(num_specimens: int, all_ids: list[int]) -> list[int]:
 
 def _selected_specimen_ids(config: pytest.Config) -> list[int]:
     all_ids = cached_specimen_ids()
-    num_specimens = int(config.getoption("--num-specimens"))
+    num_specimens = int(config.getoption("num_specimens"))
     return _limited_specimen_ids(num_specimens, all_ids)
 
 

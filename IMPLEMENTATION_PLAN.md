@@ -89,7 +89,7 @@ Goal: Build clean, functional JAX-first sweep feature functions with parity chec
 - [ ] Implement ramp sweep features next
 - [ ] Implement short-square sweep features last
 - [ ] Keep code pure and vmappable-friendly from the start
-- [ ] Add parity tests in `tests/parity/` against Allen reference for each sweep feature
+- [-] Add parity tests against Allen reference for each sweep feature
 
 Exit criteria:
 - Sweep-level JAX features for all three stimulus types pass parity tests.
@@ -156,6 +156,19 @@ Goal: Final cleanup, docs alignment, and reliable test workflow.
 Exit criteria:
 - Repository is consistent, documented, and ready for continued development.
 
+## Subgoal 11 - Regression benchmarks and performance hardening
+Goal: Add repeatable performance regression tests, then optimize safely against them.
+
+- [ ] Add benchmark fixtures and representative inputs for core sweep/cell feature paths
+- [ ] Add a reproducible benchmark runner (stable warmup/repeat settings)
+- [ ] Record baseline metrics and store them in-repo for regression comparison
+- [ ] Add CI/dev checks that fail on meaningful regressions beyond tolerance
+- [ ] Optimize hotspot kernels while preserving parity/regression correctness
+- [ ] Define an agent-driven optimization loop protocol guarded by parity + benchmark gates
+
+Exit criteria:
+- Performance regressions are automatically detected and optimization work is gated by correctness + benchmark checks.
+
 ## Progress Notes
 - 2026-03-03: Plan initialized and linked from `AGENTS.md`. No implementation subgoal started yet.
 - 2026-03-03: Subgoal 1 completed. Added `tests/load_testdata.py`, added cache ignore rule, and smoke-tested cache generation for specimen `525011903`.
@@ -177,3 +190,6 @@ Exit criteria:
 - 2026-03-11: Fixed long-square parity mapping to align with Allen DB sweep semantics (thumbnail sweep for adaptation/latency/avg-ISI, rheobase sweep for long-square first-spike fields) and patched vendored long-square rheobase tie-break to choose the highest-rate sweep among minimum-amplitude candidates, matching DB rheobase IDs on cached specimens. Sweep/single-sweep parity now passes in slow mode; remaining hard cell parity failures are concentrated on `input_resistance_mohm` (and downstream short-square key mismatches once that gate is resolved).
 - 2026-03-11: Investigated cell-level input-resistance mismatch and confirmed extractor `long_squares.input_resistance` matches DB `ri` exactly across cached specimens; updated parity mapping to compare against `ri` and treat `input_resistance_mohm` as not directly emitted by `EphysCellFeatureExtractor`. Current remaining slow-mode cell parity failures are now narrowed to `tau` availability and short-square first-spike feature differences.
 - 2026-03-11: Completed tau/short-square parity alignment pass. Relaxed vendored tau fit RMSE gate after fixing RMSE math, restoring finite tau parity in default scopes; updated short-square feature aggregation mapping (`threshold_i_short_square`, slow-trough fallbacks) to match DB behavior on cached specimens. Result: `tests/allen_ephys/test_parity.py` passes fully in `fast` then `slow` mode (`8 passed`, `36 passed`), and integrity remains green (`13 passed` fast, `64 passed, 1 skipped` slow).
+- 2026-03-12: Started JAX harness split into `tests/test_integrity.py` (synthetic computability) and `tests/test_parity.py` (JAX vs vendored Allen), with shared feature-key contract in `tests/utils/jax_feature_contract.py`. Updated pytest specimen selection option to accept both `--num_specimens` and `--num-specimens` (`dest=num_specimens`); revalidated Allen integrity/parity with both forms. JAX harness currently fails intentionally at `NotImplementedError` in `jaxley_ephys/features.py` stubs.
+- 2026-03-12: Closed event-detection parity gaps in `tests/test_event_detection.py` for threshold/peak/trough indexes on cached specimen sweeps. (This interim step used a temporary eager compatibility path and was later superseded by the pure JAX filtering path recorded below.)
+- 2026-03-12: Removed runtime Allen dependency from `jaxley_ephys/base.py` and integrated JAX SOS Bessel filtering via `jaxley_ephys/bessel.py`. Added parity tests in `tests/test_bessel.py` against SciPy (`bessel`/`sosfiltfilt`/`filtfilt`) and verified event-detection parity remains green (`uv run python -m pytest tests/test_bessel.py tests/test_event_detection.py`). Added Subgoal 11 for benchmark-regression-driven performance optimization.
