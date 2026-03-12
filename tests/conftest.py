@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import jax
 import pytest
 
 from tests.utils.allen_dataset import cached_specimen_ids, load_specimen_case
+
+# Allen parity checks compare sample indices exactly; float64 avoids artificial
+# dt quantization drift from float32 that can shift threshold crossings by 1+ samples.
+jax.config.update("jax_enable_x64", True)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

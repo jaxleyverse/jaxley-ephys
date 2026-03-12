@@ -32,8 +32,14 @@ def test_sosfiltfilt_matches_scipy_on_synthetic_signal():
     x = _synthetic_trace()
     for poles in (1, 4, 10):
         for wn in (0.05, 0.1, 0.2):
-            y_jax = np.asarray(sosfiltfilt(bessel_lowpass_sos(wn, poles=poles), x))
-            y_scipy = signal.sosfiltfilt(signal.bessel(poles, wn, "low", output="sos"), x)
+            sos_scipy = signal.bessel(poles, wn, "low", output="sos")
+            padlen = 3 * (
+                2 * sos_scipy.shape[0]
+                + 1
+                - min(np.sum(sos_scipy[:, 2] == 0.0), np.sum(sos_scipy[:, 5] == 0.0))
+            )
+            y_jax = np.asarray(sosfiltfilt(bessel_lowpass_sos(wn, poles=poles), x, padlen=padlen))
+            y_scipy = signal.sosfiltfilt(sos_scipy, x, padlen=padlen)
             np.testing.assert_allclose(y_jax, y_scipy, rtol=0.0, atol=2e-5)
 
 
@@ -42,7 +48,7 @@ def test_allen_bessel_helper_matches_scipy_filtfilt():
     t = np.arange(6000, dtype=np.float64) * dt
     v = np.sin(2 * np.pi * 1000 * t) + 0.2 * np.sin(2 * np.pi * 25000 * t)
 
-    y_jax = np.asarray(allen_bessel_sosfiltfilt(v, t, cutoff_khz=10.0, poles=4))
+    y_jax = np.asarray(allen_bessel_sosfiltfilt(v, t, cutoff_khz=10.0))
     wn = (10e3) / ((1.0 / dt) / 2.0)
     b, a = signal.bessel(4, wn, "low")
     y_scipy = signal.filtfilt(b, a, v, axis=0)

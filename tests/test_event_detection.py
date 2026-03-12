@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import jax
-
-jax.config.update("jax_enable_x64", True)
-
 import jax.numpy as jnp
 import pytest
 from allen_ephys.ephys_extractor import EphysSweepFeatureExtractor
@@ -211,3 +208,4 @@ def test_detect_events_overflow():
 
     ev = detect_events(t, v, i, t0, t1, max_spikes=3)
     assert bool(ev.overflow) is True
+

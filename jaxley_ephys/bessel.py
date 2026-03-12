@@ -80,12 +80,6 @@ _BESSEL_PHASE_POLES = {
         -0.4083220732868862 - 1.0812748428191246j,
     ),
 }
-
-
-def _is_tracer(x: object) -> bool:
-    return isinstance(x, jax.core.Tracer)
-
-
 def _poly_from_root_pair(r1: jax.Array, r2: jax.Array) -> jax.Array:
     return jnp.asarray([1.0, jnp.real(-(r1 + r2)), jnp.real(r1 * r2)])
 
@@ -113,15 +107,10 @@ def bessel_lowpass_sos(wn: float | jax.Array, poles: int = 4) -> jax.Array:
     """
     if poles not in _BESSEL_PHASE_POLES:
         raise ValueError("poles must be an integer in [1, 10]")
-    if not _is_tracer(wn):
-        wn_float = float(wn)
-        if not (0.0 < wn_float < 1.0):
-            raise ValueError("wn must be in (0, 1)")
 
     n = poles
     fs = 2.0
-    wn_jax = jnp.asarray(wn)
-    wc = 2.0 * fs * jnp.tan(jnp.pi * wn_jax / fs)
+    wc = 2.0 * fs * jnp.tan(jnp.pi * wn / fs)
 
     proto_poles = jnp.asarray(_BESSEL_PHASE_POLES[n])
     analog_poles = proto_poles * wc
@@ -152,22 +141,16 @@ def bessel_lowpass_sos(wn: float | jax.Array, poles: int = 4) -> jax.Array:
     return sos.at[0, :3].set(sos[0, :3] / gain)
 
 
-def bessel4_lowpass_sos(wn: float | jax.Array) -> jax.Array:
-    """Backward-compatible alias for order-4 filter design."""
-    return bessel_lowpass_sos(wn, poles=4)
-
-
 def _biquad_df2t(
     row: jax.Array,
     x: jax.Array,
     zi: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
-    b0, b1, b2, a0, a1, a2 = jnp.asarray(row)
+    b0, b1, b2, a0, a1, a2 = row
     b0, b1, b2 = b0 / a0, b1 / a0, b2 / a0
     a1, a2 = a1 / a0, a2 / a0
 
-    x = jnp.asarray(x)
-    state = jnp.zeros((2,)) if zi is None else jnp.asarray(zi)
+    state = jnp.zeros((2,)) if zi is None else zi
 
     def step(z: jax.Array, x_n: jax.Array) -> tuple[jax.Array, jax.Array]:
         s1, s2 = z
@@ -185,14 +168,10 @@ def sosfilt(
     x: jax.Array,
     zi: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
-    sos = jnp.asarray(sos)
-    x = jnp.asarray(x)
-
     n_sections = int(sos.shape[0])
     if zi is None:
         zi = jnp.zeros((n_sections, 2))
     else:
-        zi = jnp.asarray(zi)
         if zi.shape != (n_sections, 2):
             raise ValueError(f"zi must have shape {(n_sections, 2)}")
 
@@ -209,7 +188,6 @@ def sosfilt(
 
 
 def sosfilt_zi(sos: jax.Array) -> jax.Array:
-    sos = jnp.asarray(sos)
     rows = []
     gain = 1.0
 
@@ -233,20 +211,12 @@ def sosfiltfilt(
     x: jax.Array,
     padlen: int | None = None,
 ) -> jax.Array:
-    x = jnp.asarray(x)
-    sos = jnp.asarray(sos)
-
     if x.ndim != 1:
         raise ValueError("Only 1D input is supported")
 
     n_sections = int(sos.shape[0])
     if padlen is None:
-        if _is_tracer(sos):
-            padlen = 3 * (2 * n_sections + 1)
-        else:
-            n_zero_num = int(jnp.sum(sos[:, 2] == 0.0))
-            n_zero_den = int(jnp.sum(sos[:, 5] == 0.0))
-            padlen = 3 * (2 * n_sections + 1 - min(n_zero_num, n_zero_den))
+        padlen = 3 * (2 * n_sections + 1)
 
     if x.shape[0] <= padlen:
         raise ValueError(f"Input length must be > padlen={padlen}")
@@ -265,12 +235,8 @@ def allen_bessel_sosfiltfilt(
     v: jax.Array,
     t: jax.Array,
     cutoff_khz: float = 10.0,
-    poles: int = 4,
 ) -> jax.Array:
     """Allen-style low-pass filtering via JAX Bessel SOS + filtfilt."""
-    v = jnp.asarray(v)
-    t = jnp.asarray(t)
-
     if t.ndim != 1 or v.ndim != 1 or t.shape[0] != v.shape[0]:
         raise ValueError("allen_bessel_sosfiltfilt expects 1D aligned t and v")
     if t.shape[0] < 2:
@@ -280,18 +246,5 @@ def allen_bessel_sosfiltfilt(
     sample_freq = 1.0 / delta_t
     wn = (cutoff_khz * 1e3) / (sample_freq / 2.0)
 
-    if not _is_tracer(wn):
-        wn_float = float(wn)
-        if wn_float < 0 or wn_float >= 1:
-            raise ValueError(
-                "bessel coeff ({:f}) is outside of valid range [0,1); cannot "
-                "filter sampling frequency {:.1f} kHz with cutoff frequency "
-                "{:.1f} kHz.".format(
-                    wn_float,
-                    float(sample_freq / 1e3),
-                    float(cutoff_khz),
-                )
-            )
-
-    sos = bessel_lowpass_sos(wn, poles=poles)
+    sos = bessel_lowpass_sos(wn, poles=4)
     return sosfiltfilt(sos, v)

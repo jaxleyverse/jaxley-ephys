@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax import Array
 from typing import Optional
 
@@ -87,7 +86,6 @@ def compute_dvdt(
     v: Array,
     *,
     filter: float | None = None,
-    poles: int = 4,
 ) -> Array:
     if t.ndim != 1 or v.ndim != 1 or t.shape[0] != v.shape[0]:
         raise ValueError("compute_dvdt expects 1D aligned t and v")
@@ -97,30 +95,18 @@ def compute_dvdt(
     if filter is None:
         v_used = v
     else:
-        tracing = isinstance(t, jax.core.Tracer) or isinstance(v, jax.core.Tracer)
-        if tracing:
-            dt = jnp.diff(t)
-            fixed_dt = jnp.all(jnp.isclose(dt, dt[0], rtol=1e-3, atol=1e-9))
-            sample_freq = 1.0 / dt[0]
-            filt_coeff = (filter * 1e3) / (sample_freq / 2.0)
-            valid_coeff = (filt_coeff >= 0) & (filt_coeff < 1)
-            use_bessel = fixed_dt & valid_coeff
-            v_used = jax.lax.cond(
-                use_bessel,
-                lambda _: allen_bessel_sosfiltfilt(v, t, cutoff_khz=filter, poles=poles),
-                lambda _: _smooth5(v),
-                operand=None,
-            )
-        else:
-            t_np = np.asarray(t, dtype=np.float64)
-            dt0 = float(t_np[1] - t_np[0])
-            fixed_dt = bool(np.allclose(np.diff(t_np), dt0))
-            sample_freq = 1.0 / dt0
-            filt_coeff = (filter * 1e3) / (sample_freq / 2.0)
-            if fixed_dt and (0 <= filt_coeff < 1):
-                v_used = allen_bessel_sosfiltfilt(v, t, cutoff_khz=filter, poles=poles)
-            else:
-                v_used = _smooth5(v)
+        dt = jnp.diff(t)
+        fixed_dt = jnp.all(jnp.isclose(dt, dt[0], rtol=1e-3, atol=1e-9))
+        sample_freq = 1.0 / dt[0]
+        filt_coeff = (filter * 1e3) / (sample_freq / 2.0)
+        valid_coeff = (filt_coeff >= 0) & (filt_coeff < 1)
+        use_bessel = fixed_dt & valid_coeff
+        v_used = jax.lax.cond(
+            use_bessel,
+            lambda _: allen_bessel_sosfiltfilt(v, t, cutoff_khz=filter),
+            lambda _: _smooth5(v),
+            operand=None,
+        )
 
     dv = jnp.diff(v_used)
 
@@ -172,7 +158,6 @@ def detect_events(
     dvdt: Optional[Array] = None,
     max_spikes: int = 100,
     dvdt_filter: float | None = 10.0,
-    dvdt_poles: int = 4,
     threshold_cutoff: float = 20.0,
     peak_cutoff: float = -30.0,
     trough_cutoff: float = 2.0,
@@ -193,7 +178,7 @@ def detect_events(
     end_idx = _first_index_at_or_after(t, t1)
 
     dvdt = (
-        compute_dvdt(t, v, filter=dvdt_filter, poles=dvdt_poles)
+        compute_dvdt(t, v, filter=dvdt_filter)
         if dvdt is None
         else dvdt
     )
