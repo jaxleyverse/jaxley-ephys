@@ -18,16 +18,10 @@ import argparse
 import shutil
 from pathlib import Path
 
-from tests.utils.allen_dataset import install_allen_compat_shims
+from tests.utils.allen_dataset import CURATED_SPECIMEN_IDS, install_allen_compat_shims
 
 
-DEFAULT_CELL_IDS = [
-    525011903,
-    528642047,
-    537256313,
-    519832676,
-    469801138,
-]
+DEFAULT_CELL_IDS = CURATED_SPECIMEN_IDS
 
 
 def parse_args() -> argparse.Namespace:

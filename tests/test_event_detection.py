@@ -28,10 +28,19 @@ def _reformat_allen_events(sweep, max_spikes: int):
     threshold_raw = [sp.get("threshold_index") for sp in spikes]
     peak_raw = [sp.get("peak_index") for sp in spikes]
     trough_raw = [sp.get("trough_index") for sp in spikes]
+    upstroke_raw = [sp.get("upstroke_index") for sp in spikes]
+    downstroke_raw = [sp.get("downstroke_index") for sp in spikes]
+    clipped_raw = [sp.get("clipped") for sp in spikes]
 
     threshold_idx, threshold_valid = _padded_indices(threshold_raw, max_spikes)
     peak_idx, peak_valid = _padded_indices(peak_raw, max_spikes)
     trough_idx, trough_valid = _padded_indices(trough_raw, max_spikes)
+    upstroke_idx, upstroke_valid = _padded_indices(upstroke_raw, max_spikes)
+    downstroke_idx, downstroke_valid = _padded_indices(downstroke_raw, max_spikes)
+    clipped = np.zeros(max_spikes, dtype=bool)
+    for k, value in enumerate(clipped_raw[:max_spikes]):
+        if value is not None:
+            clipped[k] = bool(value)
 
     T = len(sweep.t)
     threshold_mask = np.zeros(T, dtype=bool)
@@ -46,9 +55,14 @@ def _reformat_allen_events(sweep, max_spikes: int):
         "threshold_idx": threshold_idx,
         "peak_idx": peak_idx,
         "trough_idx": trough_idx,
+        "upstroke_idx": upstroke_idx,
+        "downstroke_idx": downstroke_idx,
         "threshold_valid": threshold_valid,
         "peak_valid": peak_valid,
         "trough_valid": trough_valid,
+        "upstroke_valid": upstroke_valid,
+        "downstroke_valid": downstroke_valid,
+        "clipped": clipped,
         "threshold_mask": threshold_mask,
         "peak_mask": peak_mask,
         "trough_mask": trough_mask,
@@ -80,9 +94,12 @@ def test_detect_events_matches_allen_spike_detection(specimen_case, sweep_kind):
     assert np.array_equal(np.asarray(ev.threshold_idxs), expected["threshold_idx"])
     assert np.array_equal(np.asarray(ev.peak_idxs), expected["peak_idx"])
     assert np.array_equal(np.asarray(ev.trough_idxs), expected["trough_idx"])
-    assert np.array_equal(np.asarray(ev.threshold_valid), expected["threshold_valid"])
-    assert np.array_equal(np.asarray(ev.peak_valid), expected["peak_valid"])
-    assert np.array_equal(np.asarray(ev.trough_valid), expected["trough_valid"])
+    assert np.array_equal(np.asarray(ev.upstroke_idxs), expected["upstroke_idx"])
+    assert np.array_equal(np.asarray(ev.downstroke_idxs), expected["downstroke_idx"])
+    assert np.array_equal(np.asarray(ev.spike_valid), expected["threshold_valid"])
+    assert np.array_equal(np.asarray(ev.trough_idxs >= 0), expected["trough_valid"])
+    assert np.array_equal(np.asarray(ev.downstroke_idxs >= 0), expected["downstroke_valid"])
+    assert np.array_equal(np.asarray(ev.clipped), expected["clipped"])
 
 
 def test_matches_allen_synthetic():
@@ -112,9 +129,12 @@ def test_matches_allen_synthetic():
     assert np.array_equal(np.asarray(ev.threshold_idxs), expected["threshold_idx"])
     assert np.array_equal(np.asarray(ev.peak_idxs), expected["peak_idx"])
     assert np.array_equal(np.asarray(ev.trough_idxs), expected["trough_idx"])
-    assert np.array_equal(np.asarray(ev.threshold_valid), expected["threshold_valid"])
-    assert np.array_equal(np.asarray(ev.peak_valid), expected["peak_valid"])
-    assert np.array_equal(np.asarray(ev.trough_valid), expected["trough_valid"])
+    assert np.array_equal(np.asarray(ev.upstroke_idxs), expected["upstroke_idx"])
+    assert np.array_equal(np.asarray(ev.downstroke_idxs), expected["downstroke_idx"])
+    assert np.array_equal(np.asarray(ev.spike_valid), expected["threshold_valid"])
+    assert np.array_equal(np.asarray(ev.trough_idxs >= 0), expected["trough_valid"])
+    assert np.array_equal(np.asarray(ev.downstroke_idxs >= 0), expected["downstroke_valid"])
+    assert np.array_equal(np.asarray(ev.clipped), expected["clipped"])
 
 
 def test_compute_dvdt_jittable():
@@ -148,9 +168,11 @@ def test_detect_events_jittable():
     assert out.threshold_idxs.shape == (16,)
     assert out.peak_idxs.shape == (16,)
     assert out.trough_idxs.shape == (16,)
-    assert out.threshold_valid.shape == (16,)
-    assert out.peak_valid.shape == (16,)
-    assert out.trough_valid.shape == (16,)
+    assert out.upstroke_idxs.shape == (16,)
+    assert out.downstroke_idxs.shape == (16,)
+    assert out.spike_valid.shape == (16,)
+    assert out.clipped.shape == (16,)
+    assert out.window.shape == t.shape
 
 
 def test_detect_events_vmappable():
@@ -175,9 +197,11 @@ def test_detect_events_vmappable():
     assert out.threshold_idxs.shape == (3, 16)
     assert out.peak_idxs.shape == (3, 16)
     assert out.trough_idxs.shape == (3, 16)
-    assert out.threshold_valid.shape == (3, 16)
-    assert out.peak_valid.shape == (3, 16)
-    assert out.trough_valid.shape == (3, 16)
+    assert out.upstroke_idxs.shape == (3, 16)
+    assert out.downstroke_idxs.shape == (3, 16)
+    assert out.spike_valid.shape == (3, 16)
+    assert out.clipped.shape == (3, 16)
+    assert out.window.shape == t_batch.shape
 
 
 @pytest.mark.parametrize("noise_level", [0.01, 0.05, 0.1, 0.5])
@@ -206,6 +230,5 @@ def test_detect_events_overflow():
     dT = t1 - t0
     t, v, i = simulate_sweep(dt=1e-4, stim_delay=t0, stim_dur=dT, t_max=tmax)
 
-    ev = detect_events(t, v, i, t0, t1, max_spikes=3)
-    assert bool(ev.overflow) is True
-
+    with pytest.raises(ValueError, match="overflowed max_spikes"):
+        detect_events(t, v, i, t0, t1, max_spikes=3)

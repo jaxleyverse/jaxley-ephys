@@ -42,7 +42,7 @@ SPIKE_FEATURE_NAMES = (
     "upstroke_downstroke_ratio",
 )
 
-SWEEP_FEATURE_NAMES = (
+SWEEP_PARITY_FEATURE_NAMES = (
     "adapt",
     "latency",
     "isi_cv",
@@ -52,6 +52,16 @@ SWEEP_FEATURE_NAMES = (
     "avg_rate",
 )
 
+SWEEP_HYPERPOL_FEATURE_NAMES = (
+    "v_baseline",
+    "tau",
+    "sag",
+    "peak_deflect",
+    "stim_amp",
+)
+
+SWEEP_ALL_FEATURE_NAMES = SWEEP_PARITY_FEATURE_NAMES + SWEEP_HYPERPOL_FEATURE_NAMES
+SWEEP_FEATURE_NAMES = SWEEP_ALL_FEATURE_NAMES
 
 def assert_feature_equal(
     expected,

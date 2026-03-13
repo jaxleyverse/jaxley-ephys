@@ -10,70 +10,43 @@ from typing import Optional
 from .bessel import allen_bessel_sosfiltfilt
 
 
+def _raise_if_overflow(overflow: Array, max_spikes: int) -> None:
+    if isinstance(overflow, jax.core.Tracer):
+        return
+    if bool(overflow):
+        raise ValueError(
+            "detect_events overflowed max_spikes="
+            f"{max_spikes}; increase max_spikes for this sweep"
+        )
+
+
 @jax.tree_util.register_dataclass
 @dataclass
 class Events:
-    spikes: Array
-    thresholds: Array
-    peaks: Array
-    troughs: Array
+    spikes: Array # (T,) int array of spike labels, -1 for non-spike timepoints
+    thresholds: Array # (T,) bool array of threshold crossings
+    peaks: Array # (T,) bool array of peak timepoints
+    troughs: Array # (T,) bool array of trough timepoints
 
-    n_spikes: Array
-    overflow: Array
+    n_spikes: Array # scalar int number of detected spikes
+    overflow: Array # scalar bool whether overflow occurred
+    start_idx: Array # scalar int start index of analysis window 
+    end_idx: Array # scalar int end index of analysis window
 
-    threshold_idxs: Array
-    peak_idxs: Array
-    trough_idxs: Array
+    # mask
+    spike_valid: Array # (max_spikes,) bool array of which spike labels are valid; rest are -1
+    
+    # indices of events
+    threshold_idxs: Array # (max_spikes,) int array of threshold crossing indices
+    peak_idxs: Array # (max_spikes,) int array of peak indices
+    trough_idxs: Array # (max_spikes,) int array of trough indices
+    upstroke_idxs: Array # (max_spikes,) int array of upstroke indices
+    downstroke_idxs: Array # (max_spikes,) int array of downstroke indices
 
-    threshold_valid: Array
-    peak_valid: Array
-    trough_valid: Array
-
-    @classmethod
-    def from_masks(
-        cls,
-        spikes: Array,
-        thresholds: Array,
-        peaks: Array,
-        troughs: Array,
-        *,
-        max_spikes: int = 128,
-    ) -> Events:
-        n_spikes = jnp.maximum(jnp.max(spikes) + 1, 0)
-        n_thresholds = jnp.sum(thresholds)
-        n_peaks = jnp.sum(peaks)
-        n_troughs = jnp.sum(troughs)
-
-        overflow = (
-            (n_spikes > max_spikes)
-            | (n_thresholds > max_spikes)
-            | (n_peaks > max_spikes)
-            | (n_troughs > max_spikes)
-        )
-
-        threshold_idxs = jnp.where(thresholds, size=max_spikes, fill_value=-1)[0]
-        peak_idxs = jnp.where(peaks, size=max_spikes, fill_value=-1)[0]
-        trough_idxs = jnp.where(troughs, size=max_spikes, fill_value=-1)[0]
-
-        threshold_valid = threshold_idxs != -1
-        peak_valid = peak_idxs != -1
-        trough_valid = trough_idxs != -1
-
-        return cls(
-            spikes=spikes,
-            thresholds=thresholds,
-            peaks=peaks,
-            troughs=troughs,
-            n_spikes=n_spikes,
-            overflow=overflow,
-            threshold_idxs=threshold_idxs,
-            peak_idxs=peak_idxs,
-            trough_idxs=trough_idxs,
-            threshold_valid=threshold_valid,
-            peak_valid=peak_valid,
-            trough_valid=trough_valid,
-        )
-
+    # Needed because last AP downstroke can be cut off at window end.
+    trough_valid: Array # (max_spikes,) bool array of which trough indices are valid
+    downstroke_valid: Array # (max_spikes,) bool array of which downstroke indices are valid
+    clipped: Array # (max_spikes,) bool array of which spikes did not return to baseline
 
 def _smooth5(v: Array) -> Array:
     kernel = jnp.asarray([1.0, 2.0, 3.0, 2.0, 1.0])
@@ -167,11 +140,8 @@ def _detect_putative_spikes(
     )
     overflow = jnp.sum(crossing_in_window) > max_spikes
 
-    crossings = jnp.where(crossing_mask, size=max_spikes, fill_value=-1)[0]
-    in_window = (
-        (crossings >= start_idx) & (crossings <= end_idx) & (start_idx < end_idx)
-    )
-    spike_idx = jnp.where(in_window, crossings, -1)
+    crossings = jnp.where(crossing_in_window, size=max_spikes, fill_value=-1)[0]
+    spike_idx = crossings
     spike_valid = spike_idx >= 0
     return spike_idx, spike_valid, overflow
 
@@ -335,6 +305,30 @@ def _find_trough_indexes(
     return trough_idx, trough_valid
 
 
+def _find_downstroke_indexes(
+    dvdt: Array,
+    peak_idx: Array,
+    spike_valid: Array,
+    trough_idx: Array,
+    trough_valid: Array,
+) -> tuple[Array, Array]:
+    max_spikes = peak_idx.shape[0]
+    t_len = dvdt.shape[0]
+    x = jnp.arange(t_len)
+
+    def downstroke_for(k: Array) -> Array:
+        p = peak_idx[k]
+        tr = trough_idx[k]
+        valid = spike_valid[k] & trough_valid[k] & (tr > p)
+        m = valid & (x >= p) & (x < tr)
+        vals = jnp.where(m, dvdt, jnp.inf)
+        return jnp.where(valid, jnp.argmin(vals), -1)
+
+    downstroke_idx = jax.vmap(downstroke_for)(jnp.arange(max_spikes))
+    downstroke_valid = downstroke_idx >= 0
+    return downstroke_idx, downstroke_valid
+
+
 def detect_events(
     t: Array,
     v: Array,
@@ -343,7 +337,7 @@ def detect_events(
     t1: float | Array,
     *,
     dvdt: Optional[Array] = None,
-    max_spikes: int = 100,
+    max_spikes: int = 256,
     dvdt_filter: float | None = 10.0,
     threshold_cutoff: float = 20.0,
     peak_cutoff: float = -30.0,
@@ -418,6 +412,15 @@ def detect_events(
         )
     )
 
+    # Recompute upstrokes from finalized threshold/peak pairs.
+    upstroke_idx, upstroke_valid = _find_upstroke_indexes(
+        dvdt,
+        threshold_idx,
+        threshold_valid,
+        peak_idx,
+        peak_valid,
+    )
+
     # 5) Trough detection.
     trough_idx, trough_valid = _find_trough_indexes(
         v,
@@ -429,9 +432,19 @@ def detect_events(
         end_idx,
     )
 
+    downstroke_idx, downstroke_valid = _find_downstroke_indexes(
+        dvdt,
+        peak_idx,
+        threshold_valid,
+        trough_idx,
+        trough_valid,
+    )
+
     threshold_idx = jnp.where(threshold_valid, threshold_idx, -1)
     peak_idx = jnp.where(peak_valid, peak_idx, -1)
+    upstroke_idx = jnp.where(upstroke_valid, upstroke_idx, -1)
     trough_idx = jnp.where(trough_valid, trough_idx, -1)
+    downstroke_idx = jnp.where(downstroke_valid, downstroke_idx, -1)
 
     threshold_mask = _indices_to_mask(T, threshold_idx)
     peak_mask = _indices_to_mask(T, peak_idx)
@@ -451,12 +464,36 @@ def detect_events(
     trough_mask = trough_mask & in_window_t
     spike_labels = jnp.where(in_window_t, spike_labels, -1)
 
-    events = Events.from_masks(
+    n_spikes = jnp.maximum(jnp.max(spike_labels) + 1, 0)
+    n_thresholds = jnp.sum(threshold_mask)
+    n_peaks = jnp.sum(peak_mask)
+    n_troughs = jnp.sum(trough_mask)
+    overflow = (
+        (n_spikes > max_spikes)
+        | (n_thresholds > max_spikes)
+        | (n_peaks > max_spikes)
+        | (n_troughs > max_spikes)
+        | crossing_overflow
+    )
+
+    _raise_if_overflow(overflow, max_spikes)
+
+    return Events(
         spikes=spike_labels,
         thresholds=threshold_mask,
         peaks=peak_mask,
         troughs=trough_mask,
-        max_spikes=max_spikes,
+        n_spikes=n_spikes,
+        overflow=overflow,
+        start_idx=start_idx,
+        end_idx=end_idx,
+        spike_valid=threshold_valid,
+        threshold_idxs=threshold_idx,
+        peak_idxs=peak_idx,
+        trough_idxs=trough_idx,
+        upstroke_idxs=upstroke_idx,
+        downstroke_idxs=downstroke_idx,
+        trough_valid=trough_valid,
+        downstroke_valid=downstroke_valid,
+        clipped=clipped,
     )
-    events.overflow = events.overflow | crossing_overflow
-    return events

@@ -75,22 +75,3 @@ New repository tests:
 ```bash
 uv run python -m pytest tests/allen_ephys/test_integrity.py tests/allen_ephys/test_parity.py -q
 ```
-
-## Observed DB mismatches and hypotheses
-
-Current persistent mismatch clusters (from `tests/allen_ephys/report_match_data.py`):
-- small short-square first-spike voltage/timing differences on specimen
-  `565871768` outside the default `--num-specimens 5` scope
-  - `fast_trough_v_short_square`
-  - `peak_v_short_square`
-  - `threshold_v_short_square`
-  - `trough_t_short_square`
-  - `upstroke_downstroke_ratio_short_square`
-
-Working hypotheses:
-- **Short-square selection differences**: DB pipeline likely has additional
-  sweep-selection details for short-square aggregation on specific cells.
-
-Default parity gates (`--num-specimens 1` and `--num-specimens 5`) are fully
-green. The residual differences above appear only when all cached specimens are
-included.

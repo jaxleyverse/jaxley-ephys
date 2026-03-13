@@ -79,17 +79,17 @@ Exit criteria:
 ## Subgoal 5 - Implement JAX feature primitives and sweep-level features
 Goal: Build clean, functional JAX-first sweep feature functions with parity checks.
 
-- [-] Create runtime package layout under `jaxley_ephys/` (underscore naming)
-- [-] Add `jaxley_ephys` primitive modules (dV/dt, spike/event detection)
+- [x] Create runtime package layout under `jaxley_ephys/` (underscore naming)
+- [x] Add `jaxley_ephys` primitive modules (dV/dt, spike/event detection)
 - [x] Implement base event container + detection API in `jaxley_ephys/base.py`
 - [x] Add Allen parity test for event detection (`tests/test_event_detection.py`)
-- [ ] Define explicit function signatures:
+- [x] Define explicit function signatures:
   - sweep level: `v[T]`, `t[T]`, optional `i[T]`, optional `precomputed`
-- [ ] Implement long-square sweep features first
-- [ ] Implement ramp sweep features next
-- [ ] Implement short-square sweep features last
-- [ ] Keep code pure and vmappable-friendly from the start
-- [-] Add parity tests against Allen reference for each sweep feature
+- [x] Implement long-square sweep features first
+- [-] Implement ramp sweep features next
+- [-] Implement short-square sweep features last
+- [-] Keep code pure and vmappable-friendly from the start
+- [x] Add parity tests against Allen reference for each sweep feature
 
 Exit criteria:
 - Sweep-level JAX features for all three stimulus types pass parity tests.
@@ -182,6 +182,52 @@ Goal: Add diagnostics utilities for feature-level introspection and debugging af
 Exit criteria:
 - Diagnostics APIs make parity and regression failures easier to localize and explain, with tested outputs.
 
+## Subgoal 13 - Advanced/burst feature parity
+Goal: Implement burst and other advanced feature logic after core spike/sweep parity is complete.
+
+- [ ] Add explicit parity/integrity coverage for burst-related features and advanced metrics
+- [ ] Ensure default test fixture order includes at least one burst-positive specimen (active with `--num_specimens 1`)
+- [ ] Add clear skip/guard behavior when burst-positive fixture coverage is unavailable
+- [ ] Implement burst metrics only after user approval at that stage
+
+Exit criteria:
+- Burst/advanced features are validated with deterministic fixtures and clear parity expectations.
+
+## Implementation Protocol (Feature Work)
+
+This section is a required workflow contract for implementing JAX features.
+
+- **Test-first order**
+  - Write/enable integrity + parity coverage before implementing feature logic.
+  - Implement one feature at a time; run targeted tests after each feature.
+  - Keep parity tests strict; do not loosen assertions just to pass.
+- **Failure policy**
+  - If a feature remains unresolved after several serious implementation attempts,
+    mark it as skipped with a clear rationale and continue.
+  - Record skipped features in progress notes for joint follow-up.
+- **No test-bending policy**
+  - Do not modify expected outputs/tolerances to hide implementation mismatches.
+  - Only update tests when correcting incorrect test assumptions or fixture wiring.
+- **Output contracts**
+  - Spike feature primitive signature: `ft_name(t, v, i, ev, dvdt) -> Array[max_spikes]`.
+  - Index features use `-1` padding; continuous features use `jnp.nan` padding.
+  - Keep outputs vmappable/jittable with fixed-size arrays.
+- **Categorical encoding**
+  - Keep `isi_type` jittable via integer codes:
+    - `-1` missing/padded
+    - `0` direct
+    - `1` detour
+- **Implementation sequencing**
+  - Complete all core spike features first.
+  - Complete all core sweep features second.
+  - Only then revisit advanced/burst features (requires explicit user approval).
+- **Reporting requirement**
+  - After feature implementation is complete, produce a thorough report including:
+    - implemented features and parity status
+    - skipped features and failure causes
+    - jit/vmap coverage status
+    - follow-up recommendations
+
 ## Progress Notes
 - 2026-03-03: Plan initialized and linked from `AGENTS.md`. No implementation subgoal started yet.
 - 2026-03-03: Subgoal 1 completed. Added `tests/load_testdata.py`, added cache ignore rule, and smoke-tested cache generation for specimen `525011903`.
@@ -210,3 +256,8 @@ Exit criteria:
 - 2026-03-12: Cleanup pass: removed backward-compat shims in `jaxley_ephys` (including `bessel4_lowpass_sos` alias and extra detect-events pole plumbing), removed runtime NumPy dependency from `jaxley_ephys/base.py`, and centralized test-time `jax_enable_x64` in `tests/conftest.py` with rationale comment. Also deduplicated detect-events jit/vmap tests in `tests/test_event_detection.py`.
 - 2026-03-12: Refactored `detect_events` structure in `jaxley_ephys/base.py` into Allen-style pipeline helpers (`_detect_putative_spikes`, `_find_peak_indexes`, `_filter_putative_spikes`, `_find_upstroke_indexes`, `_refine_threshold_indexes`, `_check_thresholds_and_peaks`, `_find_trough_indexes`) with clear stage comments to improve readability while preserving parity and jit/vmap behavior. Verified with `tests/test_event_detection.py` and `tests/test_bessel.py`.
 - 2026-03-12: Added Subgoal 12 to plan post-regression diagnostics work (`jaxley_ephys/diagnostics`) for feature-level debugging and mismatch analysis.
+- 2026-03-12: Added Subgoal 13 for advanced/burst feature parity and appended a detailed feature-implementation protocol (test-first workflow, strict no-test-bending rule, skip policy, categorical encoding, and final reporting requirements).
+- 2026-03-12: Continued Subgoal 5 feature parity work. Fixed sweepset under-detection on high-rate sweeps by adding overflow-aware dynamic growth in `compute_sweepset_features` and corrected `_detect_putative_spikes` windowed truncation behavior in `jaxley_ephys/base.py`. Added `__init__.py` under `tests/test_feature_integrity/` and `tests/test_feature_parity/` to avoid pytest import-name collisions for `spike.py`/`sweep.py`/`sweepset.py`. Revalidated parity/integrity slices: `tests/test_feature_integrity/{spike,sweep,sweepset}.py`, `tests/test_feature_parity/{spike,sweep,sweepset}.py`, and `tests/test_event_detection.py` (`92 passed, 1 skipped` for explicit feature suites; event detection `13 passed`).
+- 2026-03-13: Continued Subgoal 5 per active direction. Refactored `jaxley_ephys/features/long_square/sweep.py` so each sweep metric has its own feature function (`ft_adapt`, `ft_latency`, `ft_isi_cv`, `ft_mean_isi`, `ft_median_isi`, `ft_first_isi`, `ft_avg_rate`) and `compute_sweep_features` now dispatches over `SWEEP_FEATURE_FUNCTIONS`. Raised default spike capacity to 256 (`detect_events` and feature defaults) and changed `detect_events` to raise `ValueError` on overflow in eager execution. Removed current sweepset computations by making `compute_sweepset_features` an explicit `NotImplementedError` placeholder pending redesign, and updated integrity/parity sweepset tests to assert that placeholder behavior. Added overflow-raise coverage in `tests/test_event_detection.py::test_detect_events_overflow`. Revalidated targeted suites: event + sweep + sweepset (`30 passed`) and spike integrity/parity (`40 passed`) with `--num_specimens 1` where applicable.
+- 2026-03-13: API-alignment pass for Subgoal 5. Aligned sweep feature interface to `feature(t, v, i, ev, dvdt)` and `compute_sweep_features(t, v, i, ev, dvdt)` with dispatcher-style execution. Added full sweep feature registry keys (`adapt`, `latency`, `isi_cv`, `mean_isi`, `median_isi`, `first_isi`, `avg_rate`, `v_baseline`, `tau`, `sag`, `peak_deflect`, `stim_amp`) and implemented hyperpolarization-capable features (`v_baseline`, `tau`, `sag`) with NaN-return behavior on non-applicable sweeps. Added `start_idx`/`end_idx` to `Events` so sweep features can reuse detect-events analysis windows without extra start/end args. Removed global max-spike default constant usage in feature modules (defaults now set on function kwargs), exposed non-prefixed spike feature callables, and made ramp/short-square sweep modules re-export long-square feature functions so imports like `from ...ramp.sweep import median_isi` work. Kept sweepset compute explicitly disabled pending redesign. Revalidated with: `tests/test_event_detection.py`, `tests/test_feature_integrity/{spike,sweep,sweepset}.py`, `tests/test_feature_parity/{spike,sweep,sweepset}.py` (`66 passed`, `--num_specimens 1` for specimen-bound tests).
+- 2026-03-13: Simplified event representation and detection internals. Replaced `Events.start_idx/end_idx` with boolean `Events.window` mask and updated sweep feature window logic to derive boundaries from this mask. Removed `Events.trough_valid` and `Events.downstroke_valid` fields after checking redundancy; validity is now derived from event indices (`idx >= 0`) in spike feature functions and event tests. Refactored detect-events mask creation to avoid dense index comparison (`_build_event_mask` scatter helper) and updated downstroke detection helper to consume trough masks rather than trough index-valid tuples. Revalidated with targeted suites: `tests/test_event_detection.py`, `tests/test_feature_integrity/{spike,sweep,sweepset}.py`, and `tests/test_feature_parity/{spike,sweep,sweepset}.py` (`67 passed`, `--num_specimens 1` where applicable).

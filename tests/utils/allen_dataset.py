@@ -19,6 +19,15 @@ CANONICAL_STIMULUS_NAMES = {
 STIMULUS_KIND_BY_NAME = {v: k for k, v in CANONICAL_STIMULUS_NAMES.items()}
 
 
+CURATED_SPECIMEN_IDS = [
+    469801138,
+    519832676,
+    525011903,
+    528642047,
+    537256313,
+]
+
+
 def install_allen_compat_shims() -> None:
     if not hasattr(np, "VisibleDeprecationWarning"):
         np.VisibleDeprecationWarning = Warning  # type: ignore[attr-defined]
@@ -245,7 +254,7 @@ class SpecimenCase:
 
 
 def cached_specimen_ids(data_root: Path = Path("tests/testdata/allen_cache")) -> list[int]:
-    out = []
+    discovered = []
     for path in sorted(data_root.glob("specimen_*")):
         if not path.is_dir():
             continue
@@ -254,8 +263,11 @@ def cached_specimen_ids(data_root: Path = Path("tests/testdata/allen_cache")) ->
         except (IndexError, ValueError):
             continue
         if (path / "ephys.nwb").exists() and (path / "ephys_sweeps.json").exists():
-            out.append(specimen_id)
-    return out
+            discovered.append(specimen_id)
+
+    curated = [sid for sid in CURATED_SPECIMEN_IDS if sid in discovered]
+    extras = [sid for sid in discovered if sid not in curated]
+    return curated + extras
 
 
 @lru_cache(maxsize=1)
