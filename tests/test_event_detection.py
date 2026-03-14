@@ -232,3 +232,21 @@ def test_detect_events_overflow():
 
     with pytest.raises(ValueError, match="overflowed max_spikes"):
         detect_events(t, v, i, t0, t1, max_spikes=3)
+
+
+def test_trough_and_downstroke_validity_implied_by_spike_and_clipped():
+    t0 = 0.02
+    t1 = 0.1
+    t, v, i = simulate_sweep(
+        dt=1e-4,
+        stim_delay=t0,
+        stim_dur=t1 - t0,
+        t_max=0.12,
+        noise_level=0.1,
+    )
+
+    ev = detect_events(t, v, i, t0, t1, max_spikes=32)
+    expected = np.asarray(ev.spike_valid) & (~np.asarray(ev.clipped))
+
+    assert np.array_equal(np.asarray(ev.trough_idxs >= 0), expected)
+    assert np.array_equal(np.asarray(ev.downstroke_idxs >= 0), expected)

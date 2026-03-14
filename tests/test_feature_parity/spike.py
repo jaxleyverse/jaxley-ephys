@@ -7,10 +7,14 @@ from jaxley_ephys.features import ISI_TYPE_DETOUR, ISI_TYPE_DIRECT, ISI_TYPE_MIS
 from tests.utils.jax_feature_contract import SPIKE_FEATURE_NAMES, assert_feature_equal
 
 
-def _long_spiking_sweep(specimen_case):
-    sweep = specimen_case.representative_sweep("long_spiking")
-    sweep.process_spikes()
-    return sweep
+def _long_spiking_sweep(specimen_sweepset_extractors):
+    ext = specimen_sweepset_extractors.get("long_square")
+    if ext is None:
+        pytest.skip("no long-square sweeps available")
+    spiking = [sweep for sweep in ext.sweeps() if sweep.sweep_feature("avg_rate") > 0]
+    if not spiking:
+        pytest.skip("no spiking long-square sweep available")
+    return spiking[0]
 
 
 def _pad_expected_spike_feature(feature_name: str, expected, max_spikes: int):
@@ -45,11 +49,14 @@ def _pad_expected_spike_feature(feature_name: str, expected, max_spikes: int):
 
 
 @pytest.mark.parametrize("feature_name", SPIKE_FEATURE_NAMES)
-def test_jax_spike_feature_matches_vendored_allen(specimen_case, feature_name: str):
-    sweep = _long_spiking_sweep(specimen_case)
+def test_jax_spike_feature_matches_vendored_allen(
+    specimen_sweepset_extractors,
+    feature_name: str,
+):
+    sweep = _long_spiking_sweep(specimen_sweepset_extractors)
     expected = sweep.spike_feature(feature_name, include_clipped=True)
 
-    max_spikes = 100
+    max_spikes = 256
     computed_map = compute_spike_features(
         sweep.t,
         sweep.v,

@@ -554,13 +554,31 @@ class EphysSweepFeatureExtractor:
             self.v[start_index:] <= frac * (v_peak - v_baseline) + v_baseline
         )
         if not search_result.size:
-            raise ft.FeatureError("could not find interval for time constant estimate")
+            err = ft.FeatureError("could not find interval for time constant estimate")
+            warnings.warn(
+                f"tau fit failed for sweep {self.id}: {err!r}; returning np.nan",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return np.nan
         fit_start = self.t[search_result[0] + start_index]
         fit_end = self.t[peak_index]
 
-        a, inv_tau, y0 = ft.fit_membrane_time_constant(
-            self.v, self.t, fit_start, fit_end, min_rsme=1.0
-        )
+        try:
+            a, inv_tau, y0 = ft.fit_membrane_time_constant(
+                self.v,
+                self.t,
+                fit_start,
+                fit_end,
+                min_rsme=1.0,
+            )
+        except (ft.FeatureError, ValueError, TypeError, RuntimeError, FloatingPointError) as exc:
+            warnings.warn(
+                f"tau fit failed for sweep {self.id}: {exc!r}; returning np.nan",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return np.nan
 
         return 1e3 / inv_tau
 

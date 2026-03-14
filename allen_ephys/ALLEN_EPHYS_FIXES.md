@@ -27,6 +27,10 @@ Changes relative to original AllenSDK implementation.
   - `estimate_time_constant`: pass `min_rsme=1.0` to
     `fit_membrane_time_constant` so corrected RMSE values for valid traces are
     not rejected wholesale by the legacy `1e-4` threshold.
+  - `estimate_time_constant`: when time-constant fitting fails (fit-window
+    detection or optimizer failures), emit `RuntimeWarning` including the
+    quoted exception and return `nan` instead of raising. This keeps downstream
+    sweep/cell feature computation resilient while surfacing the failure cause.
 
 ## 3) Unit alignment with Allen DB
 - `allen_ephys/ephys_extractor.py`

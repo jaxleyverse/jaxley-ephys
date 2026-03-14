@@ -206,6 +206,11 @@ def peak_deflect(t: Array, v: Array, i: Array, ev, dvdt: Array) -> Array:
     return deflect_v
 
 
+def peak_deflect_index(t: Array, v: Array, i: Array, ev, dvdt: Array) -> Array:
+    _, deflect_idx, _ = _voltage_deflection(t, v, i, ev, dvdt)
+    return deflect_idx
+
+
 def stim_amp(t: Array, v: Array, i: Array, ev, dvdt: Array) -> Array:
     del v, dvdt
     start_idx, end_idx, has_stim = _analysis_window(t, ev)
@@ -225,6 +230,7 @@ SWEEP_FEATURE_FUNCTIONS: dict[str, Callable[[Array, Array, Array, object, Array]
     "tau": tau,
     "sag": sag,
     "peak_deflect": peak_deflect,
+    "peak_deflect_index": peak_deflect_index,
     "stim_amp": stim_amp,
 }
 

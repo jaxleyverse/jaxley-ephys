@@ -68,6 +68,32 @@ def specimen_cases(specimen_ids: list[int]):
     }
 
 
+@pytest.fixture(scope="session")
+def specimen_sweepsets(specimen_cases):
+    sweepsets = {}
+    for specimen_id, specimen_case in specimen_cases.items():
+        by_kind = {}
+        for kind in ("long_square", "short_square", "ramp"):
+            records = specimen_case.records(kind=kind)
+            if not records:
+                continue
+            ext = specimen_case.make_sweep_set(records)
+            ext.process_spikes()
+            by_kind[kind] = ext
+        sweepsets[specimen_id] = by_kind
+    return sweepsets
+
+
+@pytest.fixture(scope="module")
+def specimen_sweepset_extractors(specimen_id: int, specimen_sweepsets):
+    if specimen_id == -1:
+        pytest.fail(
+            "No cached specimens found in tests/testdata/allen_cache. Run: "
+            "uv run python tests/load_testdata.py"
+        )
+    return specimen_sweepsets.get(specimen_id, {})
+
+
 @pytest.fixture(scope="module")
 def specimen_case(specimen_id: int):
     if specimen_id == -1:

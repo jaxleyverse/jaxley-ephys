@@ -70,8 +70,8 @@ Goal: Make sure the reference baseline is robust enough to serve as oracle for p
 - [x] Enumerate required sweep-level and cell-level features for project scope
 - [x] Add tests for any missing Allen feature computation paths
 - [x] Ensure all required features can be computed on cached testcases
-- [ ] If missing/unstable, add minimal test-only wrappers in `tests/utils/allen_reference.py`
-- [ ] Freeze Allen reference parameter choices and windows used by parity tests
+- [ ] Freeze Allen reference policy used by tests (window selection, representative sweep selection, and tuple/scalar normalization rules)
+- [ ] Verify every targeted sweep/spike/sweepset feature has a stable Allen reference path (value or `nan`, no uncaught fit exceptions)
 
 Exit criteria:
 - Every feature required for JAX reimplementation has a stable Allen reference path.
@@ -84,7 +84,7 @@ Goal: Build clean, functional JAX-first sweep feature functions with parity chec
 - [x] Implement base event container + detection API in `jaxley_ephys/base.py`
 - [x] Add Allen parity test for event detection (`tests/test_event_detection.py`)
 - [x] Define explicit function signatures:
-  - sweep level: `v[T]`, `t[T]`, optional `i[T]`, optional `precomputed`
+  - sweep level: `feature(t, v, i, ev, dvdt)` and `compute_sweep_features(t, v, i, ev, dvdt)`
 - [x] Implement long-square sweep features first
 - [-] Implement ramp sweep features next
 - [-] Implement short-square sweep features last
@@ -94,17 +94,17 @@ Goal: Build clean, functional JAX-first sweep feature functions with parity chec
 Exit criteria:
 - Sweep-level JAX features for all three stimulus types pass parity tests.
 
-## Subgoal 6 - Implement JAX cell-level features and parity tests
-Goal: Compute cell-level features from sweep-level building blocks.
+## Subgoal 6 - Implement JAX sweepset-level features and parity tests
+Goal: Compute sweepset features from sweep-level feature vectors with strict Allen parity.
 
-- [ ] Implement cell-level APIs using sweep-level functions on `[S, T]`
-- [ ] Ensure APIs are vmappable across cells `[C, S, T]`
-- [ ] Reuse optional `precomputed` where it simplifies dependency reuse
-- [ ] Implement parity tests for rheobase and other targeted cell features
-- [ ] Validate parity on cached mixed-cell panel
+- [ ] Define sweepset feature API around sweep-feature vectors (e.g. `ft_name(sweep_ft1, sweep_ft2, ...)`)
+- [ ] Implement JAX sweepset feature functions using sweep-feature-vector inputs
+- [ ] Add parity tests against Allen sweepset outputs for targeted features
+- [ ] Add integrity tests for sweepset feature shape/computability/vmap behavior
+- [ ] Validate parity on cached mixed-specimen panel
 
 Exit criteria:
-- Cell-level JAX features pass parity tests and work on batched inputs.
+- Sweepset-level JAX features pass parity tests and use sweep-feature-vector inputs.
 
 ## Subgoal 7 - Optimize codebase and computational efficiency
 Goal: Improve performance/clarity while preserving behavior.
@@ -114,6 +114,8 @@ Goal: Improve performance/clarity while preserving behavior.
 - [ ] Keep APIs simple and avoid overengineering
 - [ ] Refactor only where it improves maintainability/readability
 - [ ] Re-run parity and regression tests after each optimization batch
+- [ ] Add session-level precompute cache in `tests/conftest.py` for Allen/JAX expected feature values to avoid repeated recomputation across test modules
+- [ ] Evaluate optional persisted per-specimen feature cache format under `tests/testdata/allen_cache/specimen_<id>/` only after session-cache workflow is stable
 
 Exit criteria:
 - Performance improves or code is simpler without changing validated outputs.
@@ -193,6 +195,17 @@ Goal: Implement burst and other advanced feature logic after core spike/sweep pa
 Exit criteria:
 - Burst/advanced features are validated with deterministic fixtures and clear parity expectations.
 
+## Subgoal 14 - Bonus: JAX cell-level features and parity tests
+Goal: Compute cell-level features from sweep/sweepset building blocks after sweepset parity is complete.
+
+- [ ] Implement cell-level APIs using sweep/sweepset feature vectors
+- [ ] Ensure APIs are vmappable across cells `[C, S, T]`
+- [ ] Implement parity tests for rheobase and other targeted cell features
+- [ ] Validate parity on cached mixed-cell panel
+
+Exit criteria:
+- Cell-level JAX features pass parity tests and work on batched inputs.
+
 ## Implementation Protocol (Feature Work)
 
 This section is a required workflow contract for implementing JAX features.
@@ -209,7 +222,7 @@ This section is a required workflow contract for implementing JAX features.
   - Do not modify expected outputs/tolerances to hide implementation mismatches.
   - Only update tests when correcting incorrect test assumptions or fixture wiring.
 - **Output contracts**
-  - Spike feature primitive signature: `ft_name(t, v, i, ev, dvdt) -> Array[max_spikes]`.
+  - Spike feature primitive signature: `feature_name(t, v, i, ev, dvdt) -> Array[max_spikes]`.
   - Index features use `-1` padding; continuous features use `jnp.nan` padding.
   - Keep outputs vmappable/jittable with fixed-size arrays.
 - **Categorical encoding**
@@ -261,3 +274,6 @@ This section is a required workflow contract for implementing JAX features.
 - 2026-03-13: Continued Subgoal 5 per active direction. Refactored `jaxley_ephys/features/long_square/sweep.py` so each sweep metric has its own feature function (`ft_adapt`, `ft_latency`, `ft_isi_cv`, `ft_mean_isi`, `ft_median_isi`, `ft_first_isi`, `ft_avg_rate`) and `compute_sweep_features` now dispatches over `SWEEP_FEATURE_FUNCTIONS`. Raised default spike capacity to 256 (`detect_events` and feature defaults) and changed `detect_events` to raise `ValueError` on overflow in eager execution. Removed current sweepset computations by making `compute_sweepset_features` an explicit `NotImplementedError` placeholder pending redesign, and updated integrity/parity sweepset tests to assert that placeholder behavior. Added overflow-raise coverage in `tests/test_event_detection.py::test_detect_events_overflow`. Revalidated targeted suites: event + sweep + sweepset (`30 passed`) and spike integrity/parity (`40 passed`) with `--num_specimens 1` where applicable.
 - 2026-03-13: API-alignment pass for Subgoal 5. Aligned sweep feature interface to `feature(t, v, i, ev, dvdt)` and `compute_sweep_features(t, v, i, ev, dvdt)` with dispatcher-style execution. Added full sweep feature registry keys (`adapt`, `latency`, `isi_cv`, `mean_isi`, `median_isi`, `first_isi`, `avg_rate`, `v_baseline`, `tau`, `sag`, `peak_deflect`, `stim_amp`) and implemented hyperpolarization-capable features (`v_baseline`, `tau`, `sag`) with NaN-return behavior on non-applicable sweeps. Added `start_idx`/`end_idx` to `Events` so sweep features can reuse detect-events analysis windows without extra start/end args. Removed global max-spike default constant usage in feature modules (defaults now set on function kwargs), exposed non-prefixed spike feature callables, and made ramp/short-square sweep modules re-export long-square feature functions so imports like `from ...ramp.sweep import median_isi` work. Kept sweepset compute explicitly disabled pending redesign. Revalidated with: `tests/test_event_detection.py`, `tests/test_feature_integrity/{spike,sweep,sweepset}.py`, `tests/test_feature_parity/{spike,sweep,sweepset}.py` (`66 passed`, `--num_specimens 1` for specimen-bound tests).
 - 2026-03-13: Simplified event representation and detection internals. Replaced `Events.start_idx/end_idx` with boolean `Events.window` mask and updated sweep feature window logic to derive boundaries from this mask. Removed `Events.trough_valid` and `Events.downstroke_valid` fields after checking redundancy; validity is now derived from event indices (`idx >= 0`) in spike feature functions and event tests. Refactored detect-events mask creation to avoid dense index comparison (`_build_event_mask` scatter helper) and updated downstroke detection helper to consume trough masks rather than trough index-valid tuples. Revalidated with targeted suites: `tests/test_event_detection.py`, `tests/test_feature_integrity/{spike,sweep,sweepset}.py`, and `tests/test_feature_parity/{spike,sweep,sweepset}.py` (`67 passed`, `--num_specimens 1` where applicable).
+- 2026-03-13: Rechecked validity-mask redundancy on current event pipeline and confirmed on representative cached specimen sweeps plus synthetic sweeps that `trough_valid` and `downstroke_valid` match `spike_valid & ~clipped`. Kept these as local detection intermediates only and removed them from `Events` payload; consumers continue to derive validity from `idx >= 0`. Added explicit regression check in `tests/test_event_detection.py::test_trough_and_downstroke_validity_implied_by_spike_and_clipped` and revalidated event + feature integrity/parity slices (`67 passed`).
+- 2026-03-13: Continued Subgoal 5 sweep-parity hardening with minimal reference-policy changes. Updated vendored Allen `estimate_time_constant` to emit `RuntimeWarning` with quoted fit error and return `nan` on fit-window/optimizer failures. Added JAX sweep feature `peak_deflect_index` (split from Allen `peak_deflect` tuple semantics) and included parity coverage for both value and index. Switched JAX parity tests to reuse session-scoped processed Allen sweepset extractors from `tests/conftest.py` to avoid repeated per-feature recomputation. Removed `filterwarnings("error")` markers from Allen integrity/parity test modules to allow warning-tolerant execution. Revalidated targeted suites: `tests/test_feature_parity/{sweep,spike}.py` (`45 passed`), `tests/test_feature_integrity/{sweep,spike}.py` + `tests/test_event_detection.py` (`23 passed`), `tests/allen_ephys/{test_integrity.py,test_parity.py}` (`21 passed`), and sweepset placeholder checks (`2 passed`).
+- 2026-03-14: Completed planning/cleanup pass before next subgoal execution. Reframed Subgoal 6 to sweepset-level feature parity with sweep-feature-vector inputs, added Subgoal 14 for bonus cell-level feature work, and updated Subgoal 4/7 tasks to match current direction (minimal reference policy, session-level precompute first). Removed `precomputed` argument from `jaxley_ephys/features/spikes.py::compute_spike_features` and removed stale `precomputed` guidance from `AGENTS.md` and plan signature bullets.

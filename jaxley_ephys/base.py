@@ -27,11 +27,10 @@ class Events:
     thresholds: Array # (T,) bool array of threshold crossings
     peaks: Array # (T,) bool array of peak timepoints
     troughs: Array # (T,) bool array of trough timepoints
+    window: Array # (T,) bool array of analysis window
 
     n_spikes: Array # scalar int number of detected spikes
     overflow: Array # scalar bool whether overflow occurred
-    start_idx: Array # scalar int start index of analysis window 
-    end_idx: Array # scalar int end index of analysis window
 
     # mask
     spike_valid: Array # (max_spikes,) bool array of which spike labels are valid; rest are -1
@@ -43,9 +42,6 @@ class Events:
     upstroke_idxs: Array # (max_spikes,) int array of upstroke indices
     downstroke_idxs: Array # (max_spikes,) int array of downstroke indices
 
-    # Needed because last AP downstroke can be cut off at window end.
-    trough_valid: Array # (max_spikes,) bool array of which trough indices are valid
-    downstroke_valid: Array # (max_spikes,) bool array of which downstroke indices are valid
     clipped: Array # (max_spikes,) bool array of which spikes did not return to baseline
 
 def _smooth5(v: Array) -> Array:
@@ -458,11 +454,11 @@ def detect_events(
     has = jnp.any(eligible, axis=1)
     spike_labels = jnp.where(has, k_latest, -1)
 
-    in_window_t = (x >= start_idx) & (x <= end_idx)
-    threshold_mask = threshold_mask & in_window_t
-    peak_mask = peak_mask & in_window_t
-    trough_mask = trough_mask & in_window_t
-    spike_labels = jnp.where(in_window_t, spike_labels, -1)
+    window = (x >= start_idx) & (x <= end_idx)
+    threshold_mask = threshold_mask & window
+    peak_mask = peak_mask & window
+    trough_mask = trough_mask & window
+    spike_labels = jnp.where(window, spike_labels, -1)
 
     n_spikes = jnp.maximum(jnp.max(spike_labels) + 1, 0)
     n_thresholds = jnp.sum(threshold_mask)
@@ -483,17 +479,14 @@ def detect_events(
         thresholds=threshold_mask,
         peaks=peak_mask,
         troughs=trough_mask,
+        window=window,
         n_spikes=n_spikes,
         overflow=overflow,
-        start_idx=start_idx,
-        end_idx=end_idx,
         spike_valid=threshold_valid,
         threshold_idxs=threshold_idx,
         peak_idxs=peak_idx,
         trough_idxs=trough_idx,
         upstroke_idxs=upstroke_idx,
         downstroke_idxs=downstroke_idx,
-        trough_valid=trough_valid,
-        downstroke_valid=downstroke_valid,
         clipped=clipped,
     )

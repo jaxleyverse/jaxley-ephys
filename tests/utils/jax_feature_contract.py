@@ -57,6 +57,7 @@ SWEEP_HYPERPOL_FEATURE_NAMES = (
     "tau",
     "sag",
     "peak_deflect",
+    "peak_deflect_index",
     "stim_amp",
 )
 

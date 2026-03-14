@@ -11,6 +11,7 @@ from jaxley_ephys.features.long_square.sweep import (
     mean_isi,
     median_isi,
     peak_deflect,
+    peak_deflect_index,
     sag,
     stim_amp,
     tau,
@@ -30,6 +31,7 @@ __all__ = [
     "tau",
     "sag",
     "peak_deflect",
+    "peak_deflect_index",
     "stim_amp",
     "compute_sweep_features",
 ]

@@ -346,18 +346,9 @@ def compute_spike_features(
     *,
     max_spikes: int = 256,
     dvdt_filter: float | None = 10.0,
-    precomputed: dict[str, Array] | None = None,
 ) -> dict[str, Array]:
-    ev = None
-    dvdt = None
-    if precomputed is not None:
-        ev = precomputed.get("events")
-        dvdt = precomputed.get("dvdt")
-
-    if ev is None:
-        ev = detect_events(t, v, i, start, end, max_spikes=max_spikes, dvdt_filter=dvdt_filter)
-    if dvdt is None:
-        dvdt = compute_dvdt(t, v, filter=dvdt_filter)
+    ev = detect_events(t, v, i, start, end, max_spikes=max_spikes, dvdt_filter=dvdt_filter)
+    dvdt = compute_dvdt(t, v, filter=dvdt_filter)
 
     out: dict[str, Array] = {}
     for key, fn in SPIKE_FEATURE_FUNCTIONS.items():
