@@ -349,9 +349,7 @@ class EphysSweepFeatureExtractor:
         isis = ft.get_isis(self.t, thresholds)
 
         weight = 1.0
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=RuntimeWarning)
-            pause_list = self._process_pauses(weight)
+        pause_list = self._process_pauses(weight)
 
         if len(pause_list) == 0:
             return 0, 0.0
@@ -401,13 +399,7 @@ class EphysSweepFeatureExtractor:
         if len(self._spikes_df) == 0 or "threshold_index" not in self._spikes_df:
             return 0.0, 0
 
-        try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=RuntimeWarning)
-                burst_info = self._process_bursts()
-        except Exception as exc:
-            logging.debug("Burst metric calculation failed: %s", exc)
-            return 0.0, 0
+        burst_info = self._process_bursts()
 
         if burst_info.shape[0] > 0:
             return burst_info[:, 0].max(), burst_info.shape[0]

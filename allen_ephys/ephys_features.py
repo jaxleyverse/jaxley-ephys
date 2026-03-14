@@ -767,10 +767,9 @@ def calculate_dvdt(v, t, filter=None):
         dv = np.diff(v)
 
     dt = np.diff(t)
-    valid_dt = dt != 0
-    dvdt = 1e-3 * dv[valid_dt] / dt[valid_dt]  # in V/s = mV/ms
+    dvdt = 1e-3 * dv[dt != 0] / dt[dt != 0]  # in V/s = mV/ms
 
-    # Remove nan values (in case any dt or dv values are nan)
+    # Remove nan values (in case any dt values are NaN)
     dvdt = dvdt[~np.isnan(dvdt)]
 
     return dvdt
@@ -922,7 +921,7 @@ def fit_membrane_time_constant(v, t, start, end, min_rsme=1e-4):
         return np.nan, np.nan, np.nan
 
     pred = _exp_curve(t_window, *popt)
-    rsme = np.sqrt(np.mean(np.square(pred - v_window)))
+    rsme = np.sqrt(np.mean((pred - v_window)**2))
     if rsme > min_rsme:
         logging.debug("Curve fit for membrane time constant did not meet RSME standard")
         return np.nan, np.nan, np.nan
