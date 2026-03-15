@@ -15,10 +15,14 @@ from .sweep import (
     tau,
     v_baseline,
 )
-from .sweepset import compute_sweepset_features
+from .sweepset import (
+    SWEEPSET_FEATURE_FUNCTIONS,
+    compute_sweepset_features,
+)
 
 __all__ = [
     "SWEEP_FEATURE_FUNCTIONS",
+    "SWEEPSET_FEATURE_FUNCTIONS",
     "adapt",
     "latency",
     "isi_cv",
