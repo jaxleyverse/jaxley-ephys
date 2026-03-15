@@ -530,6 +530,25 @@ class EphysSweepFeatureExtractor:
         else:
             return np.nan
 
+    def _is_hyperpolarizing_stimulus(self):
+        if self.i is None:
+            return False
+
+        start = self.start
+        if not start:
+            start = 0
+
+        end = self.end
+        if not end:
+            end = self.t[-1]
+
+        if end <= start:
+            return False
+
+        halfway_index = ft.find_time_index(self.t, (end - start) / 2.0 + start)
+        midpoint_i = self.i[halfway_index]
+        return np.isfinite(midpoint_i) and midpoint_i < 0
+
     def estimate_time_constant(self):
         """Calculate the membrane time constant by fitting the voltage
         response with a
@@ -540,9 +559,15 @@ class EphysSweepFeatureExtractor:
         tau : membrane time constant in milliseconds
         """
 
-        # Assumes this is being done on a hyperpolarizing step
+        if not self._is_hyperpolarizing_stimulus():
+            return np.nan
+
         v_peak, peak_index = self.voltage_deflection("min")
         v_baseline = self.sweep_feature("v_baseline")
+        if not np.isfinite(v_peak) or not np.isfinite(v_baseline):
+            return np.nan
+        if v_peak >= v_baseline:
+            return np.nan
 
         if self.start:
             start_index = ft.find_time_index(self.t, self.start)
@@ -561,23 +586,28 @@ class EphysSweepFeatureExtractor:
                 stacklevel=2,
             )
             return np.nan
-        fit_start = self.t[search_result[0] + start_index]
-        fit_end = self.t[peak_index]
 
-        try:
-            a, inv_tau, y0 = ft.fit_membrane_time_constant(
-                self.v,
-                self.t,
-                fit_start,
-                fit_end,
-                min_rsme=1.0,
-            )
-        except (ft.FeatureError, ValueError, TypeError, RuntimeError, FloatingPointError) as exc:
+        fit_start_index = search_result[0] + start_index
+        if peak_index - fit_start_index < 4:
+            err = ft.FeatureError("insufficient points for tau fit window")
             warnings.warn(
-                f"tau fit failed for sweep {self.id}: {exc!r}; returning np.nan",
+                f"tau fit failed for sweep {self.id}: {err!r}; returning np.nan",
                 RuntimeWarning,
                 stacklevel=2,
             )
+            return np.nan
+
+        fit_start = self.t[fit_start_index]
+        fit_end = self.t[peak_index]
+
+        a, inv_tau, y0 = ft.fit_membrane_time_constant(
+            self.v,
+            self.t,
+            fit_start,
+            fit_end,
+            min_rsme=1.0,
+        )
+        if not np.isfinite(inv_tau) or inv_tau <= 0:
             return np.nan
 
         return 1e3 / inv_tau
@@ -594,6 +624,9 @@ class EphysSweepFeatureExtractor:
         -------
         sag : fraction that membrane potential relaxes back to baseline
         """
+
+        if not self._is_hyperpolarizing_stimulus():
+            return np.nan
 
         t = self.t
         v = self.v
@@ -615,7 +648,15 @@ class EphysSweepFeatureExtractor:
         )
         v_baseline = self.sweep_feature("v_baseline")
         v_steady = ft.average_voltage(v, t, start=end - self.baseline_interval, end=end)
-        sag = (v_peak_avg - v_steady) / (v_peak_avg - v_baseline)
+        den = v_peak_avg - v_baseline
+        if not np.isfinite(v_peak_avg) or not np.isfinite(v_baseline) or not np.isfinite(v_steady):
+            return np.nan
+        if den == 0:
+            return np.nan
+
+        sag = (v_peak_avg - v_steady) / den
+        if not np.isfinite(sag):
+            return np.nan
         return sag
 
     def spikes(self):

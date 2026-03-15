@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from typing import Callable
 
+import jax
 import jax.numpy as jnp
 from jax import Array
 
 
 BASELINE_INTERVAL = 0.1
 SAG_PEAK_WIDTH = 0.005
+STEP_STIM_TOL = 1e-6
+TAU_RMSE_MAX = 1.0
+TAU_INV_GRID_SIZE = 256
 
 
 def _analysis_window(t: Array, ev) -> tuple[Array, Array, Array]:
@@ -152,6 +156,8 @@ def tau(t: Array, v: Array, i: Array, ev, dvdt: Array) -> Array:
 
     v0, peak_idx, peak_valid = _voltage_deflection(t, v, i, ev, dvdt)
     baseline = v_baseline(t, v, i, ev, dvdt)
+    finite_inputs = jnp.isfinite(v0) & jnp.isfinite(baseline)
+    has_deflection = v0 < baseline
 
     frac_level = 0.1 * (v0 - baseline) + baseline
     x = jnp.arange(t.shape[0])
@@ -160,25 +166,53 @@ def tau(t: Array, v: Array, i: Array, ev, dvdt: Array) -> Array:
     has_cross = jnp.any(crossed)
     fit_start_idx = jnp.where(has_cross, jnp.argmax(crossed), start_idx)
 
-    fit_mask = (x >= fit_start_idx) & (x <= peak_idx)
+    fit_mask = (x >= fit_start_idx) & (x < peak_idx)
     t_rel = t - t[fit_start_idx]
-    u = v - v0
-    reg_mask = fit_mask & (u > 1e-9)
+    reg_mask = fit_mask
     n = jnp.sum(reg_mask)
 
-    y = jnp.where(reg_mask, jnp.log(u), 0.0)
-    x_use = jnp.where(reg_mask, t_rel, 0.0)
-    x_mean = jnp.where(n > 0, jnp.sum(x_use) / n, 0.0)
-    y_mean = jnp.where(n > 0, jnp.sum(y) / n, 0.0)
-    xm = x_use - x_mean
-    ym = y - y_mean
-    denom = jnp.sum(jnp.where(reg_mask, xm * xm, 0.0))
-    numer = jnp.sum(jnp.where(reg_mask, xm * ym, 0.0))
-    slope = jnp.where(denom > 0.0, numer / denom, jnp.nan)
+    valid = hyper & peak_valid & finite_inputs & has_deflection & has_cross & (n >= 4)
 
-    tau_s = jnp.where(slope < 0.0, -1.0 / slope, jnp.nan)
-    valid = hyper & peak_valid & (peak_idx > fit_start_idx + 1) & (n >= 3)
-    return jnp.where(valid, 1e3 * tau_s, jnp.nan)
+    def _fit_tau(_: None) -> Array:
+        t_fit = jnp.where(reg_mask, t_rel, 0.0)
+        v_fit = jnp.where(reg_mask, v, 0.0)
+        mask_f = reg_mask.astype(t.dtype)
+        n_f = jnp.maximum(jnp.sum(mask_f), 1.0)
+
+        inv_grid = jnp.logspace(
+            0.0,
+            4.0,
+            num=TAU_INV_GRID_SIZE,
+            dtype=t.dtype,
+        )
+        e = jnp.exp(-inv_grid[:, None] * t_fit[None, :])
+        m = mask_f[None, :]
+        em = e * m
+        vv = v_fit[None, :]
+
+        s_ee = jnp.sum(em * e, axis=1)
+        s_e1 = jnp.sum(em, axis=1)
+        s_11 = jnp.sum(m, axis=1)
+        s_ev = jnp.sum(em * vv, axis=1)
+        s_1v = jnp.sum(m * vv, axis=1)
+
+        det = s_ee * s_11 - s_e1 * s_e1
+        valid_det = det > 0.0
+        safe_det = jnp.where(valid_det, det, 1.0)
+
+        a = (s_ev * s_11 - s_1v * s_e1) / safe_det
+        y0 = (s_ee * s_1v - s_e1 * s_ev) / safe_det
+        pred = a[:, None] * e + y0[:, None]
+        resid = (pred - vv) * m
+        rmse = jnp.sqrt(jnp.sum(resid * resid, axis=1) / n_f)
+        rmse = jnp.where(valid_det, rmse, jnp.inf)
+
+        best = jnp.argmin(rmse)
+        best_rmse = rmse[best]
+        best_inv = inv_grid[best]
+        return jnp.where(best_rmse <= TAU_RMSE_MAX, 1e3 / best_inv, jnp.nan)
+
+    return jax.lax.cond(valid, _fit_tau, lambda _: jnp.nan, operand=None)
 
 
 def sag(t: Array, v: Array, i: Array, ev, dvdt: Array) -> Array:
@@ -215,7 +249,12 @@ def stim_amp(t: Array, v: Array, i: Array, ev, dvdt: Array) -> Array:
     del v, dvdt
     start_idx, end_idx, has_stim = _analysis_window(t, ev)
     mid_idx = (start_idx + end_idx) // 2
-    return jnp.where(has_stim, i[mid_idx], jnp.nan)
+    x = jnp.arange(t.shape[0])
+    in_window = has_stim & (x >= start_idx) & (x < end_idx)
+    amp = i[mid_idx]
+    max_dev = jnp.max(jnp.where(in_window, jnp.abs(i - amp), 0.0))
+    is_step = has_stim & (max_dev <= STEP_STIM_TOL)
+    return jnp.where(is_step, amp, jnp.nan)
 
 
 SWEEP_FEATURE_FUNCTIONS: dict[str, Callable[[Array, Array, Array, object, Array], Array]] = {

@@ -70,6 +70,8 @@ def specimen_cases(specimen_ids: list[int]):
 
 @pytest.fixture(scope="session")
 def specimen_sweepsets(specimen_cases):
+    from allen_ephys.ephys_extractor import _short_step_stim_amp, _step_stim_amp
+
     sweepsets = {}
     for specimen_id, specimen_case in specimen_cases.items():
         by_kind = {}
@@ -79,6 +81,16 @@ def specimen_sweepsets(specimen_cases):
                 continue
             ext = specimen_case.make_sweep_set(records)
             ext.process_spikes()
+
+            if kind == "long_square":
+                for sweep in ext.sweeps():
+                    sweep.set_stimulus_amplitude_calculator(_step_stim_amp)
+            elif kind == "short_square":
+                for sweep in ext.sweeps():
+                    sweep.set_stimulus_amplitude_calculator(_short_step_stim_amp)
+            # Ramp sweeps intentionally keep no amplitude calculator for now,
+            # so Allen stimulus amplitude remains NaN by policy.
+
             by_kind[kind] = ext
         sweepsets[specimen_id] = by_kind
     return sweepsets

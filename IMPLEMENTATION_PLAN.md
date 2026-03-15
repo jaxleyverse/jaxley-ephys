@@ -70,8 +70,8 @@ Goal: Make sure the reference baseline is robust enough to serve as oracle for p
 - [x] Enumerate required sweep-level and cell-level features for project scope
 - [x] Add tests for any missing Allen feature computation paths
 - [x] Ensure all required features can be computed on cached testcases
-- [ ] Freeze Allen reference policy used by tests (window selection, representative sweep selection, and tuple/scalar normalization rules)
-- [ ] Verify every targeted sweep/spike/sweepset feature has a stable Allen reference path (value or `nan`, no uncaught fit exceptions)
+- [x] Freeze Allen reference policy used by tests (window selection, representative sweep selection, and tuple/scalar normalization rules)
+- [x] Verify every targeted sweep/spike/sweepset feature has a stable Allen reference path (value or `nan`, no uncaught fit exceptions)
 
 Exit criteria:
 - Every feature required for JAX reimplementation has a stable Allen reference path.
@@ -86,9 +86,9 @@ Goal: Build clean, functional JAX-first sweep feature functions with parity chec
 - [x] Define explicit function signatures:
   - sweep level: `feature(t, v, i, ev, dvdt)` and `compute_sweep_features(t, v, i, ev, dvdt)`
 - [x] Implement long-square sweep features first
-- [-] Implement ramp sweep features next
-- [-] Implement short-square sweep features last
-- [-] Keep code pure and vmappable-friendly from the start
+- [x] Implement ramp sweep features next
+- [x] Implement short-square sweep features last
+- [x] Keep code pure and vmappable-friendly from the start
 - [x] Add parity tests against Allen reference for each sweep feature
 
 Exit criteria:
@@ -277,3 +277,4 @@ This section is a required workflow contract for implementing JAX features.
 - 2026-03-13: Rechecked validity-mask redundancy on current event pipeline and confirmed on representative cached specimen sweeps plus synthetic sweeps that `trough_valid` and `downstroke_valid` match `spike_valid & ~clipped`. Kept these as local detection intermediates only and removed them from `Events` payload; consumers continue to derive validity from `idx >= 0`. Added explicit regression check in `tests/test_event_detection.py::test_trough_and_downstroke_validity_implied_by_spike_and_clipped` and revalidated event + feature integrity/parity slices (`67 passed`).
 - 2026-03-13: Continued Subgoal 5 sweep-parity hardening with minimal reference-policy changes. Updated vendored Allen `estimate_time_constant` to emit `RuntimeWarning` with quoted fit error and return `nan` on fit-window/optimizer failures. Added JAX sweep feature `peak_deflect_index` (split from Allen `peak_deflect` tuple semantics) and included parity coverage for both value and index. Switched JAX parity tests to reuse session-scoped processed Allen sweepset extractors from `tests/conftest.py` to avoid repeated per-feature recomputation. Removed `filterwarnings("error")` markers from Allen integrity/parity test modules to allow warning-tolerant execution. Revalidated targeted suites: `tests/test_feature_parity/{sweep,spike}.py` (`45 passed`), `tests/test_feature_integrity/{sweep,spike}.py` + `tests/test_event_detection.py` (`23 passed`), `tests/allen_ephys/{test_integrity.py,test_parity.py}` (`21 passed`), and sweepset placeholder checks (`2 passed`).
 - 2026-03-14: Completed planning/cleanup pass before next subgoal execution. Reframed Subgoal 6 to sweepset-level feature parity with sweep-feature-vector inputs, added Subgoal 14 for bonus cell-level feature work, and updated Subgoal 4/7 tasks to match current direction (minimal reference policy, session-level precompute first). Removed `precomputed` argument from `jaxley_ephys/features/spikes.py::compute_spike_features` and removed stale `precomputed` guidance from `AGENTS.md` and plan signature bullets.
+- 2026-03-14: Completed Subgoal 4 and Subgoal 5 closures. Froze Allen reference policy in tests (representative sweep selection per stimulus family, tuple normalization for `peak_deflect`/`peak_deflect_index`, and stimulus-amplitude calculator policy with ramp `stim_amp=nan`). Hardened vendored Allen hyperpolarization-only behavior by returning `nan` for non-hyperpolarizing `tau`/`sag` contexts and guarding unstable tau-fit windows before fitting. Added targeted Allen integrity checks for stable sweep/spike/sweepset reference paths. Expanded JAX sweep parity coverage across long spiking, long hyperpolarizing, short-square, and ramp representatives, and updated JAX `tau` and `stim_amp` implementations for parity-consistent behavior. Revalidated with targeted suites: `tests/test_feature_parity/{spike,sweep}.py` (`88 passed`), `tests/test_feature_integrity/{spike,sweep,sweepset}.py` + `tests/test_event_detection.py` (`26 passed`), `tests/allen_ephys/test_integrity.py` (`15 passed`), `tests/allen_ephys/test_parity.py` (`8 passed`), and sweepset placeholder parity (`2 passed`).

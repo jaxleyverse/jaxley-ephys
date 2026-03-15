@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import math
+
+import numpy as np
 import pytest
 
 from allen_ephys.ephys_extractor import (
@@ -7,9 +10,13 @@ from allen_ephys.ephys_extractor import (
     EphysSweepFeatureExtractor,
     EphysSweepSetFeatureExtractor,
 )
+from tests.utils.jax_feature_contract import SPIKE_FEATURE_NAMES, SWEEP_FEATURE_NAMES
 
 
 STIMULUS_KINDS = ("long_square", "short_square", "ramp")
+ALLEN_SWEEP_FEATURE_NAMES = tuple(
+    name for name in SWEEP_FEATURE_NAMES if name != "peak_deflect_index"
+)
 
 
 def _compute_all_sweep_features(sweep: EphysSweepFeatureExtractor) -> None:
@@ -20,6 +27,17 @@ def _compute_all_sweep_features(sweep: EphysSweepFeatureExtractor) -> None:
 def _compute_all_spike_features(sweep: EphysSweepFeatureExtractor) -> None:
     for feature_name in sweep.spike_feature_keys():
         sweep.spike_feature(feature_name, include_clipped=True)
+
+
+def _targeted_sweep_feature_value(sweep: EphysSweepFeatureExtractor, feature_name: str):
+    if feature_name in {"peak_deflect", "peak_deflect_index"}:
+        value = sweep.sweep_feature("peak_deflect", allow_missing=True)
+        if not isinstance(value, tuple):
+            raise TypeError("Allen peak_deflect feature is expected to be a tuple")
+        if feature_name == "peak_deflect":
+            return value[0]
+        return value[1]
+    return sweep.sweep_feature(feature_name, allow_missing=True)
 
 
 def _require_records(specimen_case, kind: str):
@@ -102,3 +120,61 @@ def test_manual_cell_extractor_computable(specimen_case):
     cell.process()
     out = cell.as_dict()
     assert "long_squares" in out
+
+
+def test_targeted_feature_reference_paths_stable(specimen_sweepset_extractors):
+    long_ext = specimen_sweepset_extractors.get("long_square")
+    if long_ext is not None and long_ext.sweeps():
+        spiking = [s for s in long_ext.sweeps() if s.sweep_feature("avg_rate") > 0]
+        if spiking:
+            for feature_name in SPIKE_FEATURE_NAMES:
+                spiking[0].spike_feature(feature_name, include_clipped=True)
+
+    for ext in specimen_sweepset_extractors.values():
+        sweeps = ext.sweeps()
+        for sweep in sweeps:
+            for feature_name in SWEEP_FEATURE_NAMES:
+                _targeted_sweep_feature_value(sweep, feature_name)
+
+        for feature_name in ALLEN_SWEEP_FEATURE_NAMES:
+            ext.sweep_features(feature_name, allow_missing=True)
+
+        peak_deflect = ext.sweep_features("peak_deflect", allow_missing=True)
+        for value in peak_deflect:
+            value_part, index_part = value
+            float(value_part)
+            int(index_part)
+
+        spiking_sweeps = [sweep for sweep in sweeps if len(sweep.spikes()) > 0]
+        if not spiking_sweeps:
+            continue
+        spiking_ext = EphysSweepSetFeatureExtractor.from_sweeps(spiking_sweeps)
+
+        for feature_name in SPIKE_FEATURE_NAMES:
+            if feature_name == "isi_type":
+                continue
+            supported = True
+            for sweep in spiking_sweeps:
+                if feature_name not in set(sweep.spike_feature_keys()):
+                    supported = False
+                    break
+            if not supported:
+                continue
+            spiking_ext.spike_feature_averages(feature_name)
+
+
+def test_stimulus_amplitude_calculator_policy(specimen_sweepset_extractors):
+    long_ext = specimen_sweepset_extractors.get("long_square")
+    if long_ext is not None and long_ext.sweeps():
+        long_vals = [s.sweep_feature("stim_amp", allow_missing=True) for s in long_ext.sweeps()]
+        assert any(np.isfinite(np.asarray(long_vals, dtype=float)))
+
+    short_ext = specimen_sweepset_extractors.get("short_square")
+    if short_ext is not None and short_ext.sweeps():
+        short_vals = [s.sweep_feature("stim_amp", allow_missing=True) for s in short_ext.sweeps()]
+        assert any(np.isfinite(np.asarray(short_vals, dtype=float)))
+
+    ramp_ext = specimen_sweepset_extractors.get("ramp")
+    if ramp_ext is not None and ramp_ext.sweeps():
+        ramp_vals = [s.sweep_feature("stim_amp", allow_missing=True) for s in ramp_ext.sweeps()]
+        assert all(math.isnan(float(v)) for v in ramp_vals)
