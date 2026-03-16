@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 from jaxley_ephys.base import compute_dvdt, detect_events
 from jaxley_ephys.features import compute_sweep_features
@@ -42,38 +43,31 @@ def _assert_feature_map(computed, feature_names):
         assert computed[feature_name].shape == ()
 
 
-def test_long_sweepset_features_compute_on_synthetic_vectors():
+@pytest.fixture(scope="module")
+def synthetic_sweep_feature_vectors():
     t_set, v_set, i_set = simulate_sweepset(
         num_sweeps=6,
         dt=1e-4,
         t_max=0.12,
         i_range=(-0.3, 0.9),
     )
-    vectors = _sweep_feature_vectors(t_set, v_set, i_set)
+    return _sweep_feature_vectors(t_set, v_set, i_set)
+
+
+def test_long_sweepset_features_compute_on_synthetic_vectors(synthetic_sweep_feature_vectors):
+    vectors = synthetic_sweep_feature_vectors
     computed = compute_long(vectors)
     _assert_feature_map(computed, LONG_SQUARE_SWEEPSET_FEATURE_NAMES)
 
 
-def test_ramp_sweepset_features_compute_on_synthetic_vectors():
-    t_set, v_set, i_set = simulate_sweepset(
-        num_sweeps=5,
-        dt=1e-4,
-        t_max=0.12,
-        i_range=(0.2, 0.9),
-    )
-    vectors = _sweep_feature_vectors(t_set, v_set, i_set)
+def test_ramp_sweepset_features_compute_on_synthetic_vectors(synthetic_sweep_feature_vectors):
+    vectors = synthetic_sweep_feature_vectors
     computed = compute_ramp(vectors)
     _assert_feature_map(computed, RAMP_SWEEPSET_FEATURE_NAMES)
 
 
-def test_short_sweepset_features_compute_on_synthetic_vectors():
-    t_set, v_set, i_set = simulate_sweepset(
-        num_sweeps=5,
-        dt=1e-4,
-        t_max=0.12,
-        i_range=(0.3, 0.8),
-    )
-    vectors = _sweep_feature_vectors(t_set, v_set, i_set)
+def test_short_sweepset_features_compute_on_synthetic_vectors(synthetic_sweep_feature_vectors):
+    vectors = synthetic_sweep_feature_vectors
     computed = compute_short(vectors)
     _assert_feature_map(computed, SHORT_SQUARE_SWEEPSET_FEATURE_NAMES)
 
@@ -87,14 +81,8 @@ def test_sweepset_feature_registries_match_contract():
         assert feature_name in SHORT_SWEEPSET_FUNCTIONS
 
 
-def test_compute_sweepset_features_jittable():
-    t_set, v_set, i_set = simulate_sweepset(
-        num_sweeps=4,
-        dt=1e-4,
-        t_max=0.12,
-        i_range=(-0.2, 0.7),
-    )
-    vectors = _sweep_feature_vectors(t_set, v_set, i_set)
+def test_compute_sweepset_features_jittable(synthetic_sweep_feature_vectors):
+    vectors = synthetic_sweep_feature_vectors
 
     out_long = jax.jit(compute_long)(vectors)
     out_ramp = jax.jit(compute_ramp)(vectors)

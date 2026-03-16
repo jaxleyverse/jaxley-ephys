@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 from jaxley_ephys.base import compute_dvdt, detect_events
 from jaxley_ephys.features.long_square.sweep import SWEEP_FEATURE_FUNCTIONS, sag
@@ -12,10 +13,16 @@ from tests.utils.jax_feature_contract import SWEEP_FEATURE_NAMES
 from tests.utils.simulate_testdata import simulate_sweep, simulate_sweepset
 
 
-def test_jax_sweep_features_compute_on_synthetic_trace():
+@pytest.fixture(scope="module")
+def synthetic_sweep_primitives():
     t, v, i = simulate_sweep(dt=1e-4, t_max=0.12, stim_delay=0.02, stim_dur=0.08)
     ev = detect_events(t, v, i, 0.02, 0.1, max_spikes=256)
     dvdt = compute_dvdt(t, v)
+    return t, v, i, ev, dvdt
+
+
+def test_jax_sweep_features_compute_on_synthetic_trace(synthetic_sweep_primitives):
+    t, v, i, ev, dvdt = synthetic_sweep_primitives
 
     computed = compute_sweep_features(t, v, i, ev, dvdt)
 
@@ -23,10 +30,8 @@ def test_jax_sweep_features_compute_on_synthetic_trace():
         assert feature_name in computed
 
 
-def test_sweep_feature_registry_signature():
-    t, v, i = simulate_sweep(dt=1e-4, t_max=0.12, stim_delay=0.02, stim_dur=0.08)
-    ev = detect_events(t, v, i, 0.02, 0.1, max_spikes=256)
-    dvdt = compute_dvdt(t, v)
+def test_sweep_feature_registry_signature(synthetic_sweep_primitives):
+    t, v, i, ev, dvdt = synthetic_sweep_primitives
 
     for feature_name in SWEEP_FEATURE_NAMES:
         assert feature_name in SWEEP_FEATURE_FUNCTIONS
@@ -36,10 +41,8 @@ def test_sweep_feature_registry_signature():
         assert value.shape == ()
 
 
-def test_compute_sweep_features_jittable():
-    t, v, i = simulate_sweep(dt=1e-4, t_max=0.12, stim_amp=0.7)
-    ev = detect_events(t, v, i, 0.02, 0.1, max_spikes=256)
-    dvdt = compute_dvdt(t, v)
+def test_compute_sweep_features_jittable(synthetic_sweep_primitives):
+    t, v, i, ev, dvdt = synthetic_sweep_primitives
     fn = jax.jit(compute_sweep_features)
     out = fn(t, v, i, ev, dvdt)
     for feature_name in SWEEP_FEATURE_NAMES:

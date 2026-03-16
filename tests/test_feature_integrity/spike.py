@@ -1,20 +1,33 @@
 from __future__ import annotations
 
 import jax
-import jax.numpy as jnp
+import pytest
 
+from jaxley_ephys.base import compute_dvdt, detect_events
 from jaxley_ephys.features import SPIKE_FEATURE_FUNCTIONS, compute_spike_features
 from tests.utils.jax_feature_contract import SPIKE_FEATURE_NAMES
 from tests.utils.simulate_testdata import simulate_sweep, simulate_sweepset
 
 
-def test_jax_spike_features_compute_on_synthetic_trace():
+@pytest.fixture(scope="module")
+def synthetic_spike_primitives():
     t, v, i = simulate_sweep(dt=1e-4, t_max=0.12, stim_delay=0.02, stim_dur=0.08)
+    max_spikes = 256
+    ev = detect_events(t, v, i, 0.02, 0.1, max_spikes=max_spikes)
+    dvdt = compute_dvdt(t, v)
+    return t, v, i, ev, dvdt, max_spikes
 
-    computed = compute_spike_features(t, v, i, start=0.02, end=0.1)
+
+def test_jax_spike_features_compute_on_synthetic_trace(synthetic_spike_primitives):
+    t, v, i, ev, dvdt, max_spikes = synthetic_spike_primitives
+    computed = {
+        feature_name: SPIKE_FEATURE_FUNCTIONS[feature_name](t, v, i, ev, dvdt)
+        for feature_name in SPIKE_FEATURE_NAMES
+    }
 
     for feature_name in SPIKE_FEATURE_NAMES:
         assert feature_name in computed
+        assert computed[feature_name].shape == (max_spikes,)
 
 
 def test_compute_spike_features_jittable():

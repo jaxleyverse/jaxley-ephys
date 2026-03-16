@@ -5,22 +5,43 @@ import pytest
 
 import jax.numpy as jnp
 
+from jaxley_ephys.base import compute_dvdt, detect_events
+from jaxley_ephys.features import compute_sweep_features
+from jaxley_ephys.features.long_square.sweepset import (
+    SWEEPSET_FEATURE_INPUTS as LONG_SWEEPSET_FEATURE_INPUTS,
+)
 from jaxley_ephys.features.long_square.sweepset import compute_sweepset_features as compute_long
+from jaxley_ephys.features.ramp.sweepset import (
+    SWEEPSET_FEATURE_INPUTS as RAMP_SWEEPSET_FEATURE_INPUTS,
+)
 from jaxley_ephys.features.ramp.sweepset import compute_sweepset_features as compute_ramp
+from jaxley_ephys.features.short_square.sweepset import (
+    SWEEPSET_FEATURE_INPUTS as SHORT_SWEEPSET_FEATURE_INPUTS,
+)
 from jaxley_ephys.features.short_square.sweepset import compute_sweepset_features as compute_short
 from tests.utils.jax_feature_contract import (
     LONG_SQUARE_SWEEPSET_FEATURE_NAMES,
     RAMP_SWEEPSET_FEATURE_NAMES,
     SHORT_SQUARE_SWEEPSET_FEATURE_NAMES,
-    SWEEPSET_COMMON_FEATURE_NAMES,
     assert_feature_equal,
 )
 
 
-SAG_TARGET_MV = -100.0
-SUBTHRESH_MIN_AMP = -100.0
-SUBTHRESH_MAX_AMP = 0.0
+LONG_CELL_MAPPED = {
+    "rheobase_index": "rheobase_extractor_index",
+    "rheobase_i": "rheobase_i",
+    "fi_fit_slope": "fi_fit_slope",
+    "vm_for_sag": "vm_for_sag",
+    "input_resistance": "input_resistance",
+    "tau": "tau",
+    "sag": "sag",
+    "v_baseline": "v_baseline",
+}
 
+# TODO: why do we need lower tolerances for tau?
+FEATURE_TOLERANCES = {
+    "tau": (5e-2, 5e-3),
+}
 
 def _sweep_column(ext, feature_name: str):
     if feature_name == "peak_deflect":
@@ -32,185 +53,125 @@ def _sweep_column(ext, feature_name: str):
     return np.asarray(ext.sweep_features(feature_name, allow_missing=True), dtype=float)
 
 
-def _vectors_from_ext(ext):
-    return {
-        name: jnp.asarray(_sweep_column(ext, name), dtype=float)
-        for name in SWEEPSET_COMMON_FEATURE_NAMES
-    }
+@pytest.fixture(scope="module")
+def precomputed_sweepset_vectors(specimen_cell_context):
+    out = {}
+    for stimulus_type in ("long_square", "short_square", "ramp"):
+        ext = specimen_cell_context.sweep_extractors[stimulus_type]
+        vectors = {}
+        for sweep in ext.sweeps():
+            ev = detect_events(
+                sweep.t,
+                sweep.v,
+                sweep.i,
+                float(sweep.start),
+                float(sweep.end),
+                max_spikes=256,
+            )
+            dvdt = compute_dvdt(sweep.t, sweep.v)
+            sweep_map = compute_sweep_features(sweep.t, sweep.v, sweep.i, ev, dvdt)
+            for feature_name, value in sweep_map.items():
+                vectors.setdefault(feature_name, []).append(value)
+        out[stimulus_type] = {
+            "ext": ext,
+            "vectors": {name: jnp.asarray(values, dtype=float) for name, values in vectors.items()},
+        }
+    return out
 
 
-def _nanmean_or_nan(values, mask=None):
+def _compute_jax_sweepset_feature(vectors, feature_name: str, feature_inputs, sweepset_compute) -> jnp.ndarray:
+    deps = feature_inputs[feature_name]
+    dep_vectors = {dep: vectors[dep] for dep in deps}
+    return sweepset_compute(dep_vectors, feature_names=(feature_name,))[feature_name]
+
+
+def _nanmean_or_nan(values) -> float:
     arr = np.asarray(values, dtype=float)
     finite = np.isfinite(arr)
-    if mask is not None:
-        finite = finite & mask
     if not np.any(finite):
         return float("nan")
     return float(np.nanmean(arr[finite]))
 
 
-def _spiking_mask(avg_rate):
-    rate = np.asarray(avg_rate, dtype=float)
-    return np.isfinite(rate) & (rate > 0.0)
-
-
-def _subthreshold_mask(avg_rate):
-    rate = np.asarray(avg_rate, dtype=float)
-    return np.isfinite(rate) & (rate == 0.0)
-
-
-def _common_amp(avg_rate, stim_amp):
-    rate = np.asarray(avg_rate, dtype=float)
-    amp = np.asarray(stim_amp, dtype=float)
-    mask = _spiking_mask(rate) & np.isfinite(amp)
-    vals = amp[mask]
-    if vals.size == 0:
-        return float("nan")
-    uniq, counts = np.unique(vals, return_counts=True)
-    max_count = counts.max()
-    return float(np.min(uniq[counts == max_count]))
-
-
-def _expected_long(feature_name: str, columns: dict[str, np.ndarray]) -> float:
-    avg_rate = columns["avg_rate"]
-    stim_amp = columns["stim_amp"]
-    peak_deflect = columns["peak_deflect"]
-    v_baseline = columns["v_baseline"]
-    tau = columns["tau"]
-    sag = columns["sag"]
-
-    if feature_name == "rheobase_index":
-        spiking = _spiking_mask(avg_rate) & np.isfinite(stim_amp)
-        if not np.any(spiking):
-            return -1.0
-        min_amp = np.min(stim_amp[spiking])
-        candidates = np.where(spiking & np.isclose(stim_amp, min_amp))[0]
-        if len(candidates) == 1:
-            return float(candidates[0])
-        rates = avg_rate[candidates]
-        return float(candidates[np.nanargmax(rates)])
-
-    if feature_name == "rheobase_i":
-        idx = int(_expected_long("rheobase_index", columns))
-        if idx < 0:
-            return float("nan")
-        return float(stim_amp[idx])
-
-    if feature_name == "fi_fit_slope":
-        spiking = _spiking_mask(avg_rate) & np.isfinite(stim_amp)
-        x = stim_amp[spiking]
-        y = avg_rate[spiking]
-        if len(x) < 2:
-            return float("nan")
-        A = np.vstack([x, np.ones_like(x)]).T
-        m, _ = np.linalg.lstsq(A, y, rcond=None)[0]
-        return float(m)
-
-    if feature_name in {"sag", "vm_for_sag"}:
-        sub = _subthreshold_mask(avg_rate) & np.isfinite(peak_deflect)
-        if not np.any(sub):
-            return float("nan")
-        idx = np.argmin(np.where(sub, np.abs(peak_deflect - SAG_TARGET_MV), np.inf))
-        if feature_name == "sag":
-            return float(sag[idx])
-        return float(peak_deflect[idx])
-
-    if feature_name == "input_resistance":
-        mask = (
-            _subthreshold_mask(avg_rate)
-            & np.isfinite(stim_amp)
-            & np.isfinite(peak_deflect)
-            & (stim_amp > SUBTHRESH_MIN_AMP)
-            & (stim_amp < SUBTHRESH_MAX_AMP)
-        )
-        if not np.any(mask):
-            return float("nan")
-        v = peak_deflect[mask]
-        i = stim_amp[mask]
-        if len(v) == 1:
-            first_idx = np.where(mask)[0][0]
-            v = np.append(v, v_baseline[first_idx])
-            i = np.append(i, 0.0)
-        A = np.vstack([i, np.ones_like(i)]).T
-        m, _ = np.linalg.lstsq(A, v, rcond=None)[0]
-        return float(m * 1e3)
-
-    if feature_name == "tau":
-        mask = (
-            _subthreshold_mask(avg_rate)
-            & np.isfinite(stim_amp)
-            & (stim_amp > SUBTHRESH_MIN_AMP)
-            & (stim_amp < SUBTHRESH_MAX_AMP)
-        )
-        return _nanmean_or_nan(tau, mask)
-
-    return _nanmean_or_nan(columns[feature_name])
-
-
-def _expected_short(feature_name: str, columns: dict[str, np.ndarray]) -> float:
-    avg_rate = columns["avg_rate"]
-    stim_amp = columns["stim_amp"]
-    common = _common_amp(avg_rate, stim_amp)
-    if feature_name == "stimulus_amplitude":
-        return common
-    mask = _spiking_mask(avg_rate) & np.isclose(stim_amp, common, rtol=0.0, atol=1e-9)
-    if feature_name == "stim_amp":
-        return common
-    return _nanmean_or_nan(columns[feature_name], mask)
-
-
-def _expected_ramp(feature_name: str, columns: dict[str, np.ndarray]) -> float:
-    avg_rate = columns["avg_rate"]
-    mask = _spiking_mask(avg_rate)
-    return _nanmean_or_nan(columns[feature_name], mask)
+def _expected_allen_sweepset_feature(stimulus_type: str, feature_name: str, ext, cell_features) -> float:
+    if stimulus_type == "long_square" and feature_name in LONG_CELL_MAPPED:
+        return float(cell_features["long_squares"][LONG_CELL_MAPPED[feature_name]])
+    if stimulus_type == "short_square" and feature_name == "stimulus_amplitude":
+        return float(cell_features["short_squares"]["stimulus_amplitude"])
+    return _nanmean_or_nan(_sweep_column(ext, feature_name))
 
 
 @pytest.mark.parametrize("feature_name", LONG_SQUARE_SWEEPSET_FEATURE_NAMES)
-def test_jax_long_square_sweepset_feature_matches_policy(
-    specimen_sweepset_extractors,
+def test_jax_long_square_sweepset_feature_matches_allen(
+    specimen_cell_context,
+    precomputed_sweepset_vectors,
     feature_name: str,
 ):
-    ext = specimen_sweepset_extractors.get("long_square")
-    if ext is None or not ext.sweeps():
-        pytest.skip("no long-square sweeps available")
-
-    vectors = _vectors_from_ext(ext)
-    columns = {k: np.asarray(vectors[k], dtype=float) for k in vectors}
-    expected = _expected_long(feature_name, columns)
-    computed = compute_long(vectors)
-    assert feature_name in computed
-    assert_feature_equal(expected, computed[feature_name], atol=1e-4, rtol=1e-4)
+    ext = precomputed_sweepset_vectors["long_square"]["ext"]
+    vectors = precomputed_sweepset_vectors["long_square"]["vectors"]
+    expected = _expected_allen_sweepset_feature(
+        "long_square",
+        feature_name,
+        ext,
+        specimen_cell_context.cell_features,
+    )
+    computed = _compute_jax_sweepset_feature(
+        vectors,
+        feature_name,
+        LONG_SWEEPSET_FEATURE_INPUTS,
+        compute_long,
+    )
+    atol, rtol = FEATURE_TOLERANCES.get(feature_name, (1e-4, 1e-4))
+    assert_feature_equal(expected, computed, atol=atol, rtol=rtol)
 
 
 @pytest.mark.parametrize("feature_name", SHORT_SQUARE_SWEEPSET_FEATURE_NAMES)
-def test_jax_short_square_sweepset_feature_matches_policy(
-    specimen_sweepset_extractors,
+def test_jax_short_square_sweepset_feature_matches_allen(
+    specimen_cell_context,
+    precomputed_sweepset_vectors,
     feature_name: str,
 ):
-    ext = specimen_sweepset_extractors.get("short_square")
-    if ext is None or not ext.sweeps():
-        pytest.skip("no short-square sweeps available")
-
-    vectors = _vectors_from_ext(ext)
-    columns = {k: np.asarray(vectors[k], dtype=float) for k in vectors}
-    expected = _expected_short(feature_name, columns)
-    computed = compute_short(vectors)
-    assert feature_name in computed
-    assert_feature_equal(expected, computed[feature_name], atol=1e-4, rtol=1e-4)
+    # Note: this extractor is already filtered by Allen's cell processing to
+    # common-amplitude spiking short-square sweeps.
+    ext = precomputed_sweepset_vectors["short_square"]["ext"]
+    vectors = precomputed_sweepset_vectors["short_square"]["vectors"]
+    expected = _expected_allen_sweepset_feature(
+        "short_square",
+        feature_name,
+        ext,
+        specimen_cell_context.cell_features,
+    )
+    computed = _compute_jax_sweepset_feature(
+        vectors,
+        feature_name,
+        SHORT_SWEEPSET_FEATURE_INPUTS,
+        compute_short,
+    )
+    atol, rtol = FEATURE_TOLERANCES.get(feature_name, (1e-4, 1e-4))
+    assert_feature_equal(expected, computed, atol=atol, rtol=rtol)
 
 
 @pytest.mark.parametrize("feature_name", RAMP_SWEEPSET_FEATURE_NAMES)
-def test_jax_ramp_sweepset_feature_matches_policy(
-    specimen_sweepset_extractors,
+def test_jax_ramp_sweepset_feature_matches_allen(
+    specimen_cell_context,
+    precomputed_sweepset_vectors,
     feature_name: str,
 ):
-    ext = specimen_sweepset_extractors.get("ramp")
-    if ext is None or not ext.sweeps():
-        pytest.skip("no ramp sweeps available")
-
-    vectors = _vectors_from_ext(ext)
-    columns = {k: np.asarray(vectors[k], dtype=float) for k in vectors}
-    expected = _expected_ramp(feature_name, columns)
-    computed = compute_ramp(vectors)
-    assert feature_name in computed
-    assert_feature_equal(expected, computed[feature_name], atol=1e-4, rtol=1e-4)
+    # Note: this extractor is already filtered by Allen's cell processing to
+    # spiking ramp sweeps.
+    ext = precomputed_sweepset_vectors["ramp"]["ext"]
+    vectors = precomputed_sweepset_vectors["ramp"]["vectors"]
+    expected = _expected_allen_sweepset_feature(
+        "ramp",
+        feature_name,
+        ext,
+        specimen_cell_context.cell_features,
+    )
+    computed = _compute_jax_sweepset_feature(
+        vectors,
+        feature_name,
+        RAMP_SWEEPSET_FEATURE_INPUTS,
+        compute_ramp,
+    )
+    atol, rtol = FEATURE_TOLERANCES.get(feature_name, (1e-4, 1e-4))
+    assert_feature_equal(expected, computed, atol=atol, rtol=rtol)

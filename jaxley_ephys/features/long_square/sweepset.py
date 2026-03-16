@@ -249,9 +249,17 @@ SWEEPSET_FEATURE_INPUTS: dict[str, tuple[str, ...]] = {
 }
 
 
-def compute_sweepset_features(sweep_feature_vectors: dict[str, Array]) -> dict[str, Array]:
+def compute_sweepset_features(
+    sweep_feature_vectors: dict[str, Array],
+    *,
+    feature_names: tuple[str, ...] | None = None,
+) -> dict[str, Array]:
     out: dict[str, Array] = {}
-    for name, fn in SWEEPSET_FEATURE_FUNCTIONS.items():
+    names = feature_names if feature_names is not None else tuple(SWEEPSET_FEATURE_FUNCTIONS.keys())
+    for name in names:
+        if name not in SWEEPSET_FEATURE_FUNCTIONS:
+            raise KeyError(f"unknown sweepset feature '{name}'")
+        fn = SWEEPSET_FEATURE_FUNCTIONS[name]
         deps = SWEEPSET_FEATURE_INPUTS[name]
         missing = [dep for dep in deps if dep not in sweep_feature_vectors]
         if missing:

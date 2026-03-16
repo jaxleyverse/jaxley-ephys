@@ -9,7 +9,7 @@ from jax import Array
 
 BASELINE_INTERVAL = 0.1
 SAG_PEAK_WIDTH = 0.005
-STEP_STIM_TOL = 1e-6
+STEP_STIM_TOL = 1e-1
 TAU_RMSE_MAX = 1.0
 TAU_INV_GRID_SIZE = 256
 
@@ -248,12 +248,24 @@ def peak_deflect_index(t: Array, v: Array, i: Array, ev, dvdt: Array) -> Array:
 def stim_amp(t: Array, v: Array, i: Array, ev, dvdt: Array) -> Array:
     del v, dvdt
     start_idx, end_idx, has_stim = _analysis_window(t, ev)
-    mid_idx = (start_idx + end_idx) // 2
+    s1 = jnp.minimum(start_idx + 1, end_idx)
+    step_amp = i[s1]
     x = jnp.arange(t.shape[0])
-    in_window = has_stim & (x >= start_idx) & (x < end_idx)
-    amp = i[mid_idx]
-    max_dev = jnp.max(jnp.where(in_window, jnp.abs(i - amp), 0.0))
-    is_step = has_stim & (max_dev <= STEP_STIM_TOL)
+    tail_mask = x >= s1
+    max_tail = jnp.max(jnp.where(tail_mask, i, -jnp.inf))
+    amp = jnp.where(
+        step_amp < 0.0,
+        step_amp,
+        jnp.where(max_tail > (step_amp + STEP_STIM_TOL), max_tail, step_amp),
+    )
+    in_window = has_stim & (x >= start_idx) & (x <= end_idx)
+    core = in_window & (jnp.abs(i) >= (jnp.abs(amp) - STEP_STIM_TOL))
+    core_count = jnp.sum(core)
+    core_max = jnp.max(jnp.where(core, i, -jnp.inf))
+    core_min = jnp.min(jnp.where(core, i, jnp.inf))
+    core_range = core_max - core_min
+    is_step = has_stim & (core_count >= 3) & (core_range <= (STEP_STIM_TOL / 2.0))
+
     return jnp.where(is_step, amp, jnp.nan)
 
 
@@ -274,8 +286,19 @@ SWEEP_FEATURE_FUNCTIONS: dict[str, Callable[[Array, Array, Array, object, Array]
 }
 
 
-def compute_sweep_features(t: Array, v: Array, i: Array, ev, dvdt: Array) -> dict[str, Array]:
-    return {
-        feature_name: feature_fn(t, v, i, ev, dvdt)
-        for feature_name, feature_fn in SWEEP_FEATURE_FUNCTIONS.items()
-    }
+def compute_sweep_features(
+    t: Array,
+    v: Array,
+    i: Array,
+    ev,
+    dvdt: Array,
+    *,
+    feature_names: tuple[str, ...] | None = None,
+) -> dict[str, Array]:
+    names = feature_names if feature_names is not None else tuple(SWEEP_FEATURE_FUNCTIONS.keys())
+    out: dict[str, Array] = {}
+    for feature_name in names:
+        if feature_name not in SWEEP_FEATURE_FUNCTIONS:
+            raise KeyError(f"unknown sweep feature '{feature_name}'")
+        out[feature_name] = SWEEP_FEATURE_FUNCTIONS[feature_name](t, v, i, ev, dvdt)
+    return out

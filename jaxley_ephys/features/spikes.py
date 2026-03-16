@@ -346,12 +346,17 @@ def compute_spike_features(
     *,
     max_spikes: int = 256,
     dvdt_filter: float | None = 10.0,
+    feature_names: tuple[str, ...] | None = None,
 ) -> dict[str, Array]:
     ev = detect_events(t, v, i, start, end, max_spikes=max_spikes, dvdt_filter=dvdt_filter)
     dvdt = compute_dvdt(t, v, filter=dvdt_filter)
 
     out: dict[str, Array] = {}
-    for key, fn in SPIKE_FEATURE_FUNCTIONS.items():
+    names = feature_names if feature_names is not None else tuple(SPIKE_FEATURE_FUNCTIONS.keys())
+    for key in names:
+        if key not in SPIKE_FEATURE_FUNCTIONS:
+            raise KeyError(f"unknown spike feature '{key}'")
+        fn = SPIKE_FEATURE_FUNCTIONS[key]
         value = fn(t, v, i, ev, dvdt)
         if value.shape != (max_spikes,):
             raise ValueError(

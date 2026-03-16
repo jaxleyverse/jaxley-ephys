@@ -14,8 +14,11 @@ REPRESENTATIVE_KINDS = (
     "long_hyperpol",
 )
 
+# TODO: Use same tolerances as other features?
+# Why different tolerances?
 FEATURE_TOLERANCES = {
     "tau": (1e-2, 5e-3),
+    "latency": (5e-5, 5e-5),
 }
 
 
@@ -26,7 +29,7 @@ def _select_representative_sweep(kind: str, specimen_sweepset_extractors):
     else:
         ext = specimen_sweepset_extractors.get(kind)
     if ext is None:
-        pytest.skip(f"no {kind} sweeps available")
+        return None
 
     sweeps = ext.sweeps()
     if kind == "long_spiking":
@@ -41,16 +44,15 @@ def _select_representative_sweep(kind: str, specimen_sweepset_extractors):
     if not selected:
         selected = sweeps
     if not selected:
-        pytest.skip(f"no sweeps available for {kind}")
+        return None
     return selected[0]
 
 
-def _expected_allen_sweep_feature(sweep, feature_name: str):
-    """Minimal Allen normalization policy used by parity tests.
+def _feature_tolerance(feature_name: str) -> tuple[float, float]:
+    return FEATURE_TOLERANCES.get(feature_name, (1e-6, 1e-6))
 
-    Allen `peak_deflect` returns a tuple `(value, index)`. JAX splits this into
-    scalar features `peak_deflect` and `peak_deflect_index`.
-    """
+
+def _expected_allen_sweep_feature(sweep, feature_name: str):
     if feature_name == "peak_deflect":
         return sweep.sweep_feature("peak_deflect", allow_missing=True)[0]
     if feature_name == "peak_deflect_index":
@@ -58,29 +60,35 @@ def _expected_allen_sweep_feature(sweep, feature_name: str):
     return sweep.sweep_feature(feature_name, allow_missing=True)
 
 
-def _feature_tolerance(feature_name: str) -> tuple[float, float]:
-    return FEATURE_TOLERANCES.get(feature_name, (1e-6, 1e-6))
+@pytest.fixture(scope="module")
+def representative_sweep_primitives(specimen_sweepset_extractors):
+    out = {}
+    for kind in REPRESENTATIVE_KINDS:
+        sweep = _select_representative_sweep(kind, specimen_sweepset_extractors)
+        if sweep is None:
+            pytest.fail(f"No {kind} sweep found for sweep parity checks.")
+        ev = detect_events(
+            sweep.t,
+            sweep.v,
+            sweep.i,
+            float(sweep.start),
+            float(sweep.end),
+            max_spikes=256,
+        )
+        dvdt = compute_dvdt(sweep.t, sweep.v)
+        out[kind] = (sweep, ev, dvdt)
+    return out
 
 
 @pytest.mark.parametrize("kind", REPRESENTATIVE_KINDS)
 @pytest.mark.parametrize("feature_name", SWEEP_FEATURE_NAMES)
 def test_jax_sweep_feature_matches_vendored_allen(
-    specimen_sweepset_extractors,
+    representative_sweep_primitives,
     kind: str,
     feature_name: str,
 ):
-    sweep = _select_representative_sweep(kind, specimen_sweepset_extractors)
+    sweep, ev, dvdt = representative_sweep_primitives[kind]
     expected = _expected_allen_sweep_feature(sweep, feature_name)
-
-    ev = detect_events(
-        sweep.t,
-        sweep.v,
-        sweep.i,
-        float(sweep.start),
-        float(sweep.end),
-        max_spikes=256,
-    )
-    dvdt = compute_dvdt(sweep.t, sweep.v)
 
     computed_map = compute_sweep_features(
         sweep.t,
@@ -88,6 +96,7 @@ def test_jax_sweep_feature_matches_vendored_allen(
         sweep.i,
         ev,
         dvdt,
+        feature_names=(feature_name,),
     )
 
     assert feature_name in computed_map

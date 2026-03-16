@@ -3,17 +3,23 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from jaxley_ephys.features import ISI_TYPE_DETOUR, ISI_TYPE_DIRECT, ISI_TYPE_MISSING, compute_spike_features
+from jaxley_ephys.base import compute_dvdt, detect_events
+from jaxley_ephys.features import (
+    ISI_TYPE_DETOUR,
+    ISI_TYPE_DIRECT,
+    ISI_TYPE_MISSING,
+    SPIKE_FEATURE_FUNCTIONS,
+)
 from tests.utils.jax_feature_contract import SPIKE_FEATURE_NAMES, assert_feature_equal
 
 
 def _long_spiking_sweep(specimen_sweepset_extractors):
     ext = specimen_sweepset_extractors.get("long_square")
     if ext is None:
-        pytest.skip("no long-square sweeps available")
+        return None
     spiking = [sweep for sweep in ext.sweeps() if sweep.sweep_feature("avg_rate") > 0]
     if not spiking:
-        pytest.skip("no spiking long-square sweep available")
+        return None
     return spiking[0]
 
 
@@ -48,24 +54,48 @@ def _pad_expected_spike_feature(feature_name: str, expected, max_spikes: int):
     return out
 
 
-@pytest.mark.parametrize("feature_name", SPIKE_FEATURE_NAMES)
-def test_jax_spike_feature_matches_vendored_allen(
-    specimen_sweepset_extractors,
-    feature_name: str,
-):
+@pytest.fixture(scope="module")
+def long_spiking_sweep_primitives(specimen_sweepset_extractors):
     sweep = _long_spiking_sweep(specimen_sweepset_extractors)
-    expected = sweep.spike_feature(feature_name, include_clipped=True)
+    if sweep is None:
+        pytest.skip("No long-spiking sweep found for spike parity checks.")
 
     max_spikes = 256
-    computed_map = compute_spike_features(
+    dvdt_filter = 10.0
+    ev = detect_events(
         sweep.t,
         sweep.v,
         sweep.i,
         float(sweep.start),
         float(sweep.end),
         max_spikes=max_spikes,
+        dvdt_filter=dvdt_filter,
+    )
+    dvdt = compute_dvdt(sweep.t, sweep.v, filter=dvdt_filter)
+    return sweep, ev, dvdt, max_spikes
+
+
+@pytest.mark.parametrize("feature_name", SPIKE_FEATURE_NAMES)
+def test_jax_spike_feature_matches_vendored_allen(
+    long_spiking_sweep_primitives,
+    feature_name: str,
+):
+    sweep, ev, dvdt, max_spikes = long_spiking_sweep_primitives
+    expected = sweep.spike_feature(feature_name, include_clipped=True)
+
+    computed = SPIKE_FEATURE_FUNCTIONS[feature_name](
+        sweep.t,
+        sweep.v,
+        sweep.i,
+        ev,
+        dvdt,
     )
 
-    assert feature_name in computed_map
+    assert computed.shape == (max_spikes,)
+    # TODO: move if here:
+    # if feature_name == "isi_type":
+    #     expected = _map_isi_type(expected, max_spikes)
+    # if feature_name.endswith("_index") or feature_name == "isi_type":
+    #   #     expected =_pad_max_spikes(expected, max_spikes)
     expected_padded = _pad_expected_spike_feature(feature_name, expected, max_spikes)
-    assert_feature_equal(expected_padded, computed_map[feature_name])
+    assert_feature_equal(expected_padded, computed)
