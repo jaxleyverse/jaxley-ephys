@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import jax.numpy as jnp
 
-from jaxley_ephys.base import compute_dvdt, detect_events
+from jaxley_ephys.events import compute_dvdt, detect_events
 from jaxley_ephys.features import (
     ISI_TYPE_DETOUR,
     ISI_TYPE_DIRECT,
@@ -66,8 +67,8 @@ def long_spiking_sweep_primitives(specimen_sweepset_extractors):
         sweep.t,
         sweep.v,
         sweep.i,
-        float(sweep.start),
-        float(sweep.end),
+        jnp.asarray(float(sweep.start)),
+        jnp.asarray(float(sweep.end)),
         max_spikes=max_spikes,
         dvdt_filter=dvdt_filter,
     )

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import pytest
+import jax.numpy as jnp
 
-from jaxley_ephys.base import compute_dvdt, detect_events
+from jaxley_ephys.events import compute_dvdt, detect_events
 from jaxley_ephys.features import compute_sweep_features
 from tests.utils.jax_feature_contract import SWEEP_FEATURE_NAMES, assert_feature_equal
 
@@ -14,8 +15,8 @@ REPRESENTATIVE_KINDS = (
     "long_hyperpol",
 )
 
-# TODO: Use same tolerances as other features?
-# Why different tolerances?
+# TODO: tighten tau tolerance after tau-fit parity hardening; mixed-specimen
+# checks still show O(1e-1) absolute gaps for long-hyperpolarizing sweeps.
 FEATURE_TOLERANCES = {
     "tau": (1e-2, 5e-3),
     "latency": (5e-5, 5e-5),
@@ -35,7 +36,9 @@ def _select_representative_sweep(kind: str, specimen_sweepset_extractors):
     if kind == "long_spiking":
         selected = [s for s in sweeps if s.sweep_feature("avg_rate") > 0]
     elif kind == "long_hyperpol":
-        selected = [s for s in sweeps if s.sweep_feature("stim_amp", allow_missing=True) < 0]
+        selected = [
+            s for s in sweeps if s.sweep_feature("stim_amp", allow_missing=True) < 0
+        ]
     elif kind in {"short_square", "ramp"}:
         selected = [s for s in sweeps if s.sweep_feature("avg_rate") > 0]
     else:
@@ -71,8 +74,8 @@ def representative_sweep_primitives(specimen_sweepset_extractors):
             sweep.t,
             sweep.v,
             sweep.i,
-            float(sweep.start),
-            float(sweep.end),
+            jnp.asarray(float(sweep.start)),
+            jnp.asarray(float(sweep.end)),
             max_spikes=256,
         )
         dvdt = compute_dvdt(sweep.t, sweep.v)

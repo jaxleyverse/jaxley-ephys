@@ -5,20 +5,26 @@ import pytest
 
 import jax.numpy as jnp
 
-from jaxley_ephys.base import compute_dvdt, detect_events
+from jaxley_ephys.events import compute_dvdt, detect_events
 from jaxley_ephys.features import compute_sweep_features
 from jaxley_ephys.features.long_square.sweepset import (
     SWEEPSET_FEATURE_INPUTS as LONG_SWEEPSET_FEATURE_INPUTS,
 )
-from jaxley_ephys.features.long_square.sweepset import compute_sweepset_features as compute_long
+from jaxley_ephys.features.long_square.sweepset import (
+    compute_sweepset_features as compute_long,
+)
 from jaxley_ephys.features.ramp.sweepset import (
     SWEEPSET_FEATURE_INPUTS as RAMP_SWEEPSET_FEATURE_INPUTS,
 )
-from jaxley_ephys.features.ramp.sweepset import compute_sweepset_features as compute_ramp
+from jaxley_ephys.features.ramp.sweepset import (
+    compute_sweepset_features as compute_ramp,
+)
 from jaxley_ephys.features.short_square.sweepset import (
     SWEEPSET_FEATURE_INPUTS as SHORT_SWEEPSET_FEATURE_INPUTS,
 )
-from jaxley_ephys.features.short_square.sweepset import compute_sweepset_features as compute_short
+from jaxley_ephys.features.short_square.sweepset import (
+    compute_sweepset_features as compute_short,
+)
 from tests.utils.jax_feature_contract import (
     LONG_SQUARE_SWEEPSET_FEATURE_NAMES,
     RAMP_SWEEPSET_FEATURE_NAMES,
@@ -38,10 +44,12 @@ LONG_CELL_MAPPED = {
     "v_baseline": "v_baseline",
 }
 
-# TODO: why do we need lower tolerances for tau?
+# TODO: tighten tau tolerance after tau-fit parity hardening; mixed-specimen
+# checks still show O(1e-1 to 1e0) absolute gaps for long-square aggregates.
 FEATURE_TOLERANCES = {
     "tau": (5e-2, 5e-3),
 }
+
 
 def _sweep_column(ext, feature_name: str):
     if feature_name == "peak_deflect":
@@ -64,8 +72,8 @@ def precomputed_sweepset_vectors(specimen_cell_context):
                 sweep.t,
                 sweep.v,
                 sweep.i,
-                float(sweep.start),
-                float(sweep.end),
+                jnp.asarray(float(sweep.start)),
+                jnp.asarray(float(sweep.end)),
                 max_spikes=256,
             )
             dvdt = compute_dvdt(sweep.t, sweep.v)
@@ -74,12 +82,17 @@ def precomputed_sweepset_vectors(specimen_cell_context):
                 vectors.setdefault(feature_name, []).append(value)
         out[stimulus_type] = {
             "ext": ext,
-            "vectors": {name: jnp.asarray(values, dtype=float) for name, values in vectors.items()},
+            "vectors": {
+                name: jnp.asarray(values, dtype=float)
+                for name, values in vectors.items()
+            },
         }
     return out
 
 
-def _compute_jax_sweepset_feature(vectors, feature_name: str, feature_inputs, sweepset_compute) -> jnp.ndarray:
+def _compute_jax_sweepset_feature(
+    vectors, feature_name: str, feature_inputs, sweepset_compute
+) -> jnp.ndarray:
     deps = feature_inputs[feature_name]
     dep_vectors = {dep: vectors[dep] for dep in deps}
     return sweepset_compute(dep_vectors, feature_names=(feature_name,))[feature_name]
@@ -93,7 +106,9 @@ def _nanmean_or_nan(values) -> float:
     return float(np.nanmean(arr[finite]))
 
 
-def _expected_allen_sweepset_feature(stimulus_type: str, feature_name: str, ext, cell_features) -> float:
+def _expected_allen_sweepset_feature(
+    stimulus_type: str, feature_name: str, ext, cell_features
+) -> float:
     if stimulus_type == "long_square" and feature_name in LONG_CELL_MAPPED:
         return float(cell_features["long_squares"][LONG_CELL_MAPPED[feature_name]])
     if stimulus_type == "short_square" and feature_name == "stimulus_amplitude":

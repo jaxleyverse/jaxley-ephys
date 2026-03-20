@@ -23,26 +23,31 @@ def _raise_if_overflow(overflow: Array, max_spikes: int) -> None:
 @jax.tree_util.register_dataclass
 @dataclass
 class Events:
-    spikes: Array # (T,) int array of spike labels, -1 for non-spike timepoints
-    thresholds: Array # (T,) bool array of threshold crossings
-    peaks: Array # (T,) bool array of peak timepoints
-    troughs: Array # (T,) bool array of trough timepoints
-    window: Array # (T,) bool array of analysis window
+    spikes: Array  # (T,) int array of spike labels, -1 for non-spike timepoints
+    thresholds: Array  # (T,) bool array of threshold crossings
+    peaks: Array  # (T,) bool array of peak timepoints
+    troughs: Array  # (T,) bool array of trough timepoints
+    window: Array  # (T,) bool array of analysis window
 
-    n_spikes: Array # scalar int number of detected spikes
-    overflow: Array # scalar bool whether overflow occurred
+    n_spikes: Array  # scalar int number of detected spikes
+    overflow: Array  # scalar bool whether overflow occurred
 
     # mask
-    spike_valid: Array # (max_spikes,) bool array of which spike labels are valid; rest are -1
-    
-    # indices of events
-    threshold_idxs: Array # (max_spikes,) int array of threshold crossing indices
-    peak_idxs: Array # (max_spikes,) int array of peak indices
-    trough_idxs: Array # (max_spikes,) int array of trough indices
-    upstroke_idxs: Array # (max_spikes,) int array of upstroke indices
-    downstroke_idxs: Array # (max_spikes,) int array of downstroke indices
+    spike_valid: (
+        Array  # (max_spikes,) bool array of which spike labels are valid; rest are -1
+    )
 
-    clipped: Array # (max_spikes,) bool array of which spikes did not return to baseline
+    # indices of events
+    threshold_idxs: Array  # (max_spikes,) int array of threshold crossing indices
+    peak_idxs: Array  # (max_spikes,) int array of peak indices
+    trough_idxs: Array  # (max_spikes,) int array of trough indices
+    upstroke_idxs: Array  # (max_spikes,) int array of upstroke indices
+    downstroke_idxs: Array  # (max_spikes,) int array of downstroke indices
+
+    clipped: (
+        Array  # (max_spikes,) bool array of which spikes did not return to baseline
+    )
+
 
 def _smooth5(v: Array) -> Array:
     kernel = jnp.asarray([1.0, 2.0, 3.0, 2.0, 1.0])
@@ -85,7 +90,7 @@ def compute_dvdt(
     return out.at[:-1].set(short)
 
 
-def _first_index_at_or_after(t: Array, t0: float | Array) -> Array:
+def _first_index_at_or_after(t: Array, t0: Array) -> Array:
     mask = t >= t0
     idx = jnp.argmax(mask)
     return jnp.where(jnp.any(mask), idx, t.shape[0] - 1)
@@ -264,9 +269,7 @@ def _check_thresholds_and_peaks(
     p_last = peak_idx[last_idx]
     th_last = threshold_idx[last_idx]
     returned = jnp.any(
-        (x >= p_last)
-        & (x <= end_idx)
-        & (v <= (v[jnp.maximum(th_last, 0)] + 1.0))
+        (x >= p_last) & (x <= end_idx) & (v <= (v[jnp.maximum(th_last, 0)] + 1.0))
     )
     clipped_last = (n_valid > 0) & (~returned)
     clipped = jnp.zeros((max_spikes,), dtype=bool).at[last_idx].set(clipped_last)
@@ -329,8 +332,8 @@ def detect_events(
     t: Array,
     v: Array,
     i: Array,
-    t0: float | Array,
-    t1: float | Array,
+    t0: Array,
+    t1: Array,
     *,
     dvdt: Optional[Array] = None,
     max_spikes: int = 256,
@@ -339,24 +342,13 @@ def detect_events(
     peak_cutoff: float = -30.0,
     trough_cutoff: float = 2.0,
 ) -> Events:
-    if t.ndim != 1 or v.ndim != 1 or i.ndim != 1:
-        raise ValueError("detect_events expects 1D t, v, i")
-    if not (t.shape[0] == v.shape[0] == i.shape[0]):
-        raise ValueError("detect_events expects aligned t, v, i arrays")
-    if max_spikes <= 0:
-        raise ValueError("max_spikes must be > 0")
-
     T = t.shape[0]
     x = jnp.arange(T)
     start_idx = _first_index_at_or_after(t, t0)
     end_idx = _first_index_at_or_after(t, t1)
 
     # 1) dv/dt and putative spike detection.
-    dvdt = (
-        compute_dvdt(t, v, filter=dvdt_filter)
-        if dvdt is None
-        else dvdt
-    )
+    dvdt = compute_dvdt(t, v, filter=dvdt_filter) if dvdt is None else dvdt
 
     spike_idx, spike_valid, crossing_overflow = _detect_putative_spikes(
         dvdt,
@@ -472,7 +464,7 @@ def detect_events(
         | crossing_overflow
     )
 
-    _raise_if_overflow(overflow, max_spikes)
+    _raise_if_overflow(overflow, max_spikes)  # NOTE: fails silenty when jitted!
 
     return Events(
         spikes=spike_labels,

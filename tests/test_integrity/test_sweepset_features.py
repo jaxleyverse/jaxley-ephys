@@ -4,20 +4,26 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from jaxley_ephys.base import compute_dvdt, detect_events
+from jaxley_ephys.events import compute_dvdt, detect_events
 from jaxley_ephys.features import compute_sweep_features
 from jaxley_ephys.features.long_square.sweepset import (
     SWEEPSET_FEATURE_FUNCTIONS as LONG_SWEEPSET_FUNCTIONS,
 )
-from jaxley_ephys.features.long_square.sweepset import compute_sweepset_features as compute_long
+from jaxley_ephys.features.long_square.sweepset import (
+    compute_sweepset_features as compute_long,
+)
 from jaxley_ephys.features.ramp.sweepset import (
     SWEEPSET_FEATURE_FUNCTIONS as RAMP_SWEEPSET_FUNCTIONS,
 )
-from jaxley_ephys.features.ramp.sweepset import compute_sweepset_features as compute_ramp
+from jaxley_ephys.features.ramp.sweepset import (
+    compute_sweepset_features as compute_ramp,
+)
 from jaxley_ephys.features.short_square.sweepset import (
     SWEEPSET_FEATURE_FUNCTIONS as SHORT_SWEEPSET_FUNCTIONS,
 )
-from jaxley_ephys.features.short_square.sweepset import compute_sweepset_features as compute_short
+from jaxley_ephys.features.short_square.sweepset import (
+    compute_sweepset_features as compute_short,
+)
 from tests.utils.jax_feature_contract import (
     LONG_SQUARE_SWEEPSET_FEATURE_NAMES,
     RAMP_SWEEPSET_FEATURE_NAMES,
@@ -29,7 +35,7 @@ from tests.utils.simulate_testdata import simulate_sweepset
 def _sweep_feature_vectors(t_set, v_set, i_set):
     vectors = {}
     for t, v, i in zip(t_set, v_set, i_set):
-        ev = detect_events(t, v, i, 0.02, 0.1, max_spikes=256)
+        ev = detect_events(t, v, i, jnp.asarray(0.02), jnp.asarray(0.1), max_spikes=32)
         dvdt = compute_dvdt(t, v)
         sweep_map = compute_sweep_features(t, v, i, ev, dvdt)
         for name, value in sweep_map.items():
@@ -54,19 +60,25 @@ def synthetic_sweep_feature_vectors():
     return _sweep_feature_vectors(t_set, v_set, i_set)
 
 
-def test_long_sweepset_features_compute_on_synthetic_vectors(synthetic_sweep_feature_vectors):
+def test_long_sweepset_features_compute_on_synthetic_vectors(
+    synthetic_sweep_feature_vectors,
+):
     vectors = synthetic_sweep_feature_vectors
     computed = compute_long(vectors)
     _assert_feature_map(computed, LONG_SQUARE_SWEEPSET_FEATURE_NAMES)
 
 
-def test_ramp_sweepset_features_compute_on_synthetic_vectors(synthetic_sweep_feature_vectors):
+def test_ramp_sweepset_features_compute_on_synthetic_vectors(
+    synthetic_sweep_feature_vectors,
+):
     vectors = synthetic_sweep_feature_vectors
     computed = compute_ramp(vectors)
     _assert_feature_map(computed, RAMP_SWEEPSET_FEATURE_NAMES)
 
 
-def test_short_sweepset_features_compute_on_synthetic_vectors(synthetic_sweep_feature_vectors):
+def test_short_sweepset_features_compute_on_synthetic_vectors(
+    synthetic_sweep_feature_vectors,
+):
     vectors = synthetic_sweep_feature_vectors
     computed = compute_short(vectors)
     _assert_feature_map(computed, SHORT_SQUARE_SWEEPSET_FEATURE_NAMES)

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 from allen_ephys.ephys_extractor import EphysSweepFeatureExtractor
 
-from jaxley_ephys.base import compute_dvdt, detect_events
+from jaxley_ephys.events import compute_dvdt, detect_events
 from tests.utils.simulate_testdata import simulate_sweep, simulate_sweepset
 
 
@@ -83,8 +83,8 @@ def test_detect_events_matches_allen_spike_detection(specimen_case, sweep_kind):
         sweep.t,
         sweep.v,
         sweep.i,
-        t0,
-        t1,
+        jnp.asarray(t0),
+        jnp.asarray(t1),
         max_spikes=max_spikes,
     )
     expected = _reformat_allen_events(sweep, max_spikes=max_spikes)
@@ -98,7 +98,9 @@ def test_detect_events_matches_allen_spike_detection(specimen_case, sweep_kind):
     assert np.array_equal(np.asarray(ev.downstroke_idxs), expected["downstroke_idx"])
     assert np.array_equal(np.asarray(ev.spike_valid), expected["threshold_valid"])
     assert np.array_equal(np.asarray(ev.trough_idxs >= 0), expected["trough_valid"])
-    assert np.array_equal(np.asarray(ev.downstroke_idxs >= 0), expected["downstroke_valid"])
+    assert np.array_equal(
+        np.asarray(ev.downstroke_idxs >= 0), expected["downstroke_valid"]
+    )
     assert np.array_equal(np.asarray(ev.clipped), expected["clipped"])
 
 
@@ -121,7 +123,15 @@ def test_matches_allen_synthetic():
 
     max_spikes = 128
     expected = _reformat_allen_events(sweep, max_spikes=max_spikes)
-    ev = detect_events(t, v, i, t0, t1, max_spikes=max_spikes, dvdt_filter=4.0)
+    ev = detect_events(
+        t,
+        v,
+        i,
+        jnp.asarray(t0),
+        jnp.asarray(t1),
+        max_spikes=max_spikes,
+        dvdt_filter=4.0,
+    )
 
     assert int(ev.n_spikes) == expected["n_spikes"]
     assert bool(ev.overflow) == expected["overflow"]
@@ -133,7 +143,9 @@ def test_matches_allen_synthetic():
     assert np.array_equal(np.asarray(ev.downstroke_idxs), expected["downstroke_idx"])
     assert np.array_equal(np.asarray(ev.spike_valid), expected["threshold_valid"])
     assert np.array_equal(np.asarray(ev.trough_idxs >= 0), expected["trough_valid"])
-    assert np.array_equal(np.asarray(ev.downstroke_idxs >= 0), expected["downstroke_valid"])
+    assert np.array_equal(
+        np.asarray(ev.downstroke_idxs >= 0), expected["downstroke_valid"]
+    )
     assert np.array_equal(np.asarray(ev.clipped), expected["clipped"])
 
 
@@ -218,7 +230,7 @@ def test_detect_events(noise_level):
         noise_level=noise_level,
     )
 
-    ev = detect_events(t, v, i, t0, t1, max_spikes=8)
+    ev = detect_events(t, v, i, jnp.asarray(t0), jnp.asarray(t1), max_spikes=8)
     assert int(ev.n_spikes) == 5
     assert bool(ev.overflow) is False
 
@@ -231,7 +243,7 @@ def test_detect_events_overflow():
     t, v, i = simulate_sweep(dt=1e-4, stim_delay=t0, stim_dur=dT, t_max=tmax)
 
     with pytest.raises(ValueError, match="overflowed max_spikes"):
-        detect_events(t, v, i, t0, t1, max_spikes=3)
+        detect_events(t, v, i, jnp.asarray(t0), jnp.asarray(t1), max_spikes=3)
 
 
 def test_trough_and_downstroke_validity_implied_by_spike_and_clipped():
@@ -245,7 +257,7 @@ def test_trough_and_downstroke_validity_implied_by_spike_and_clipped():
         noise_level=0.1,
     )
 
-    ev = detect_events(t, v, i, t0, t1, max_spikes=32)
+    ev = detect_events(t, v, i, jnp.asarray(t0), jnp.asarray(t1), max_spikes=32)
     expected = np.asarray(ev.spike_valid) & (~np.asarray(ev.clipped))
 
     assert np.array_equal(np.asarray(ev.trough_idxs >= 0), expected)

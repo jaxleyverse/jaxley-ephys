@@ -5,7 +5,7 @@ from typing import Callable
 import jax.numpy as jnp
 from jax import Array
 
-from jaxley_ephys.base import Events, compute_dvdt, detect_events
+from jaxley_ephys.events import Events, compute_dvdt, detect_events
 
 ISI_TYPE_MISSING = -1
 ISI_TYPE_DIRECT = 0
@@ -41,7 +41,12 @@ def _fast_trough_index_from_events(ev: Events, dvdt: Array) -> tuple[Array, Arra
     def one_fast(k: Array) -> Array:
         down = ev.downstroke_idxs[k]
         nxt = next_thr[k]
-        valid = ev.spike_valid[k] & (~ev.clipped[k]) & _downstroke_valid(ev)[k] & (nxt > down)
+        valid = (
+            ev.spike_valid[k]
+            & (~ev.clipped[k])
+            & _downstroke_valid(ev)[k]
+            & (nxt > down)
+        )
         target = 0.01 * dvdt[jnp.maximum(down, 0)]
         m = valid & (x >= down) & (x < nxt)
         cand = jnp.where(m & (dvdt >= target), x, t_len + 1)
@@ -76,7 +81,9 @@ def _width_feature(
         height = v[pk_safe] - v[tr_safe]
         width_level = v[tr_safe] + height / 2.0
         thresh_to_peak_level = v[spk_safe] + (v[pk_safe] - v[spk_safe]) / 2.0
-        width_level = jnp.where(width_level < v[spk_safe], thresh_to_peak_level, width_level)
+        width_level = jnp.where(
+            width_level < v[spk_safe], thresh_to_peak_level, width_level
+        )
 
         left_mask = valid & (x <= pk_safe) & (x > spk_safe) & (v <= width_level)
         start_idx = jnp.max(jnp.where(left_mask, x, -1))
@@ -297,7 +304,9 @@ def upstroke_downstroke_ratio(
     return jnp.where(valid, up / -down, jnp.nan)
 
 
-SPIKE_FEATURE_FUNCTIONS: dict[str, Callable[[Array, Array, Array, Events, Array], Array]] = {
+SPIKE_FEATURE_FUNCTIONS: dict[
+    str, Callable[[Array, Array, Array, Events, Array], Array]
+] = {
     "threshold_index": threshold_index,
     "clipped": clipped,
     "threshold_t": threshold_t,
@@ -341,18 +350,30 @@ def compute_spike_features(
     t: Array,
     v: Array,
     i: Array,
-    start: float,
-    end: float,
+    start: Array,
+    end: Array,
     *,
     max_spikes: int = 256,
     dvdt_filter: float | None = 10.0,
     feature_names: tuple[str, ...] | None = None,
 ) -> dict[str, Array]:
-    ev = detect_events(t, v, i, start, end, max_spikes=max_spikes, dvdt_filter=dvdt_filter)
+    ev = detect_events(
+        t,
+        v,
+        i,
+        start,
+        end,
+        max_spikes=max_spikes,
+        dvdt_filter=dvdt_filter,
+    )
     dvdt = compute_dvdt(t, v, filter=dvdt_filter)
 
     out: dict[str, Array] = {}
-    names = feature_names if feature_names is not None else tuple(SPIKE_FEATURE_FUNCTIONS.keys())
+    names = (
+        feature_names
+        if feature_names is not None
+        else tuple(SPIKE_FEATURE_FUNCTIONS.keys())
+    )
     for key in names:
         if key not in SPIKE_FEATURE_FUNCTIONS:
             raise KeyError(f"unknown spike feature '{key}'")
