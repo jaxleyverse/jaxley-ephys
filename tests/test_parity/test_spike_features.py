@@ -63,16 +63,17 @@ def long_spiking_sweep_primitives(specimen_sweepset_extractors):
 
     max_spikes = 256
     dvdt_filter = 10.0
+    dvdt = compute_dvdt(sweep.t, sweep.v, filter=dvdt_filter)
     ev = detect_events(
         sweep.t,
         sweep.v,
         sweep.i,
         jnp.asarray(float(sweep.start)),
         jnp.asarray(float(sweep.end)),
+        dvdt=dvdt,
         max_spikes=max_spikes,
         dvdt_filter=dvdt_filter,
     )
-    dvdt = compute_dvdt(sweep.t, sweep.v, filter=dvdt_filter)
     return sweep, ev, dvdt, max_spikes
 
 

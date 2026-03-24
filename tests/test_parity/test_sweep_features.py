@@ -70,15 +70,16 @@ def representative_sweep_primitives(specimen_sweepset_extractors):
         sweep = _select_representative_sweep(kind, specimen_sweepset_extractors)
         if sweep is None:
             pytest.fail(f"No {kind} sweep found for sweep parity checks.")
+        dvdt = compute_dvdt(sweep.t, sweep.v)
         ev = detect_events(
             sweep.t,
             sweep.v,
             sweep.i,
             jnp.asarray(float(sweep.start)),
             jnp.asarray(float(sweep.end)),
+            dvdt=dvdt,
             max_spikes=256,
         )
-        dvdt = compute_dvdt(sweep.t, sweep.v)
         out[kind] = (sweep, ev, dvdt)
     return out
 

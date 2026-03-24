@@ -68,15 +68,16 @@ def precomputed_sweepset_vectors(specimen_cell_context):
         ext = specimen_cell_context.sweep_extractors[stimulus_type]
         vectors = {}
         for sweep in ext.sweeps():
+            dvdt = compute_dvdt(sweep.t, sweep.v)
             ev = detect_events(
                 sweep.t,
                 sweep.v,
                 sweep.i,
                 jnp.asarray(float(sweep.start)),
                 jnp.asarray(float(sweep.end)),
+                dvdt=dvdt,
                 max_spikes=256,
             )
-            dvdt = compute_dvdt(sweep.t, sweep.v)
             sweep_map = compute_sweep_features(sweep.t, sweep.v, sweep.i, ev, dvdt)
             for feature_name, value in sweep_map.items():
                 vectors.setdefault(feature_name, []).append(value)

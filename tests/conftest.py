@@ -1,15 +1,76 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import jax
+import numpy as np
 import pytest
 
 from tests.utils.allen_dataset import cached_specimen_ids, load_specimen_case
+from tests.utils.feature_cache import (
+    load_cached_allen_features,
+    write_cached_allen_features,
+)
 
 # Allen parity checks compare sample indices exactly; float64 avoids artificial
 # dt quantization drift from float32 that can shift threshold crossings by 1+ samples.
 jax.config.update("jax_enable_x64", True)
+
+
+def _modality_for_extractor_key(extractor_key: str) -> str | None:
+    if extractor_key.startswith("long_square"):
+        return "long_square"
+    if extractor_key == "short_square":
+        return "short_square"
+    if extractor_key.startswith("ramp"):
+        return "ramp"
+    return None
+
+
+def _prepare_sweep_arrays_for_parity(sweep_extractors: dict[str, Any]) -> None:
+    max_len_by_modality: dict[str, int] = {}
+    modality_by_sweep: dict[int, str] = {}
+    sweep_by_key: dict[int, Any] = {}
+
+    for extractor_key, ext in sweep_extractors.items():
+        modality = _modality_for_extractor_key(extractor_key)
+        if modality is None:
+            continue
+        for sweep in ext.sweeps():
+            sweep_key = id(sweep)
+            sweep_by_key[sweep_key] = sweep
+            prior = modality_by_sweep.get(sweep_key)
+            if prior is not None and prior != modality:
+                raise ValueError(
+                    f"sweep object reused across modalities: {prior} vs {modality}"
+                )
+            modality_by_sweep[sweep_key] = modality
+            max_len_by_modality[modality] = max(
+                max_len_by_modality.get(modality, 0),
+                int(len(sweep.t)),
+            )
+
+    for sweep_key, sweep in sweep_by_key.items():
+        modality = modality_by_sweep[sweep_key]
+        t = np.asarray(sweep.t, dtype=float)
+        v = np.asarray(sweep.v, dtype=float)
+        i = None if sweep.i is None else np.asarray(sweep.i, dtype=float)
+
+        target_len = max_len_by_modality.get(modality, int(len(t)))
+        if target_len > len(t):
+            pad = target_len - len(t)
+            v = np.pad(v, (0, pad), mode="edge")
+            if i is not None:
+                i = np.pad(i, (0, pad), mode="edge")
+            dt = float(t[1] - t[0]) if t.size > 1 else 0.0
+            t_tail = t[-1] + dt * np.arange(1, pad + 1, dtype=float)
+            t = np.concatenate([t, t_tail])
+
+        sweep.t = t
+        sweep.v = v
+        if i is not None:
+            sweep.i = i
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -21,6 +82,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         type=int,
         default=1,
         help="Number of cached specimens to include (default: 1).",
+    )
+    parser.addoption(
+        "--use-cached-features",
+        action="store_true",
+        default=False,
+        help=(
+            "Load precomputed Allen extractor features from "
+            "tests/testdata/allen_cache/specimen_<id>/ephys_features.{json,npz}."
+        ),
     )
 
 
@@ -89,8 +159,9 @@ class SpecimenCellContext:
 
 
 @pytest.fixture(scope="session")
-def specimen_context_loader():
+def specimen_context_loader(request: pytest.FixtureRequest):
     cache: dict[int, SpecimenCellContext] = {}
+    use_cached_features = bool(request.config.getoption("use_cached_features"))
 
     def _build(specimen_id: int) -> SpecimenCellContext:
         if specimen_id in cache:
@@ -98,8 +169,19 @@ def specimen_context_loader():
 
         specimen_case = load_specimen_case(specimen_id)
         cell = specimen_case.build_cell_extractor_for_nwb()
-        cell.process()
-        features = cell.as_dict()
+
+        if use_cached_features:
+            try:
+                features = load_cached_allen_features(specimen_case, cell)
+            except FileNotFoundError as exc:
+                pytest.fail(
+                    f"--use-cached-features set but cached features are missing for "
+                    f"specimen {specimen_id}: {exc}. Run pytest once without "
+                    f"--use-cached-features to generate ephys_features cache files."
+                )
+        else:
+            cell.process()
+            features = cell.as_dict()
 
         sweep_extractors = {
             # Allen process() mutates internal state and filters short-square and
@@ -116,18 +198,11 @@ def specimen_context_loader():
             "ramp_all": cell.ramps_features(all=True),
         }
 
-        # Keep parity inputs float64-stable for JAX filtering/index comparisons.
-        seen = set()
-        for ext in sweep_extractors.values():
-            for sweep in ext.sweeps():
-                sweep_key = id(sweep)
-                if sweep_key in seen:
-                    continue
-                seen.add(sweep_key)
-                sweep.t = sweep.t.astype(float)
-                sweep.v = sweep.v.astype(float)
-                if sweep.i is not None:
-                    sweep.i = sweep.i.astype(float)
+        if not use_cached_features:
+            write_cached_allen_features(specimen_case, features, sweep_extractors)
+
+        # Keep parity inputs float64-stable and shape-aligned by modality.
+        _prepare_sweep_arrays_for_parity(sweep_extractors)
 
         ctx = SpecimenCellContext(
             specimen_id=specimen_id,
@@ -143,7 +218,9 @@ def specimen_context_loader():
 
 
 @pytest.fixture(scope="session")
-def specimen_cell_context(specimen_id: int, specimen_context_loader) -> SpecimenCellContext:
+def specimen_cell_context(
+    specimen_id: int, specimen_context_loader
+) -> SpecimenCellContext:
     if specimen_id == -1:
         pytest.fail(
             "No cached specimens found in tests/testdata/allen_cache. Run: "
