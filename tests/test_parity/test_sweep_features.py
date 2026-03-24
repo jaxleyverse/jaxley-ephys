@@ -4,7 +4,7 @@ import pytest
 import jax.numpy as jnp
 
 from jaxley_ephys.events import compute_dvdt, detect_events
-from jaxley_ephys.features import compute_sweep_features
+from jaxley_ephys.features import SWEEP_FEATURE_FUNCTIONS
 from tests.utils.jax_feature_contract import SWEEP_FEATURE_NAMES, assert_feature_equal
 
 
@@ -94,15 +94,13 @@ def test_jax_sweep_feature_matches_vendored_allen(
     sweep, ev, dvdt = representative_sweep_primitives[kind]
     expected = _expected_allen_sweep_feature(sweep, feature_name)
 
-    computed_map = compute_sweep_features(
+    computed = SWEEP_FEATURE_FUNCTIONS[feature_name](
         sweep.t,
         sweep.v,
         sweep.i,
         ev,
         dvdt,
-        feature_names=(feature_name,),
     )
 
-    assert feature_name in computed_map
     atol, rtol = _feature_tolerance(feature_name)
-    assert_feature_equal(expected, computed_map[feature_name], atol=atol, rtol=rtol)
+    assert_feature_equal(expected, computed, atol=atol, rtol=rtol)

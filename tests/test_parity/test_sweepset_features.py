@@ -61,34 +61,45 @@ def _sweep_column(ext, feature_name: str):
     return np.asarray(ext.sweep_features(feature_name, allow_missing=True), dtype=float)
 
 
+def _precompute_sweepset_vectors(ext):
+    vectors = {}
+    for sweep in ext.sweeps():
+        dvdt = compute_dvdt(sweep.t, sweep.v)
+        ev = detect_events(
+            sweep.t,
+            sweep.v,
+            sweep.i,
+            jnp.asarray(float(sweep.start)),
+            jnp.asarray(float(sweep.end)),
+            dvdt=dvdt,
+            max_spikes=256,
+        )
+        sweep_map = compute_sweep_features(sweep.t, sweep.v, sweep.i, ev, dvdt)
+        for feature_name, value in sweep_map.items():
+            vectors.setdefault(feature_name, []).append(value)
+
+    return {
+        "ext": ext,
+        "vectors": {name: jnp.asarray(values, dtype=float) for name, values in vectors.items()},
+    }
+
+
 @pytest.fixture(scope="module")
-def precomputed_sweepset_vectors(specimen_cell_context):
-    out = {}
-    for stimulus_type in ("long_square", "short_square", "ramp"):
-        ext = specimen_cell_context.sweep_extractors[stimulus_type]
-        vectors = {}
-        for sweep in ext.sweeps():
-            dvdt = compute_dvdt(sweep.t, sweep.v)
-            ev = detect_events(
-                sweep.t,
-                sweep.v,
-                sweep.i,
-                jnp.asarray(float(sweep.start)),
-                jnp.asarray(float(sweep.end)),
-                dvdt=dvdt,
-                max_spikes=256,
-            )
-            sweep_map = compute_sweep_features(sweep.t, sweep.v, sweep.i, ev, dvdt)
-            for feature_name, value in sweep_map.items():
-                vectors.setdefault(feature_name, []).append(value)
-        out[stimulus_type] = {
-            "ext": ext,
-            "vectors": {
-                name: jnp.asarray(values, dtype=float)
-                for name, values in vectors.items()
-            },
-        }
-    return out
+def precomputed_long_square_vectors(specimen_cell_context):
+    ext = specimen_cell_context.sweep_extractors["long_square"]
+    return _precompute_sweepset_vectors(ext)
+
+
+@pytest.fixture(scope="module")
+def precomputed_short_square_vectors(specimen_cell_context):
+    ext = specimen_cell_context.sweep_extractors["short_square"]
+    return _precompute_sweepset_vectors(ext)
+
+
+@pytest.fixture(scope="module")
+def precomputed_ramp_vectors(specimen_cell_context):
+    ext = specimen_cell_context.sweep_extractors["ramp"]
+    return _precompute_sweepset_vectors(ext)
 
 
 def _compute_jax_sweepset_feature(
@@ -120,11 +131,11 @@ def _expected_allen_sweepset_feature(
 @pytest.mark.parametrize("feature_name", LONG_SQUARE_SWEEPSET_FEATURE_NAMES)
 def test_jax_long_square_sweepset_feature_matches_allen(
     specimen_cell_context,
-    precomputed_sweepset_vectors,
+    precomputed_long_square_vectors,
     feature_name: str,
 ):
-    ext = precomputed_sweepset_vectors["long_square"]["ext"]
-    vectors = precomputed_sweepset_vectors["long_square"]["vectors"]
+    ext = precomputed_long_square_vectors["ext"]
+    vectors = precomputed_long_square_vectors["vectors"]
     expected = _expected_allen_sweepset_feature(
         "long_square",
         feature_name,
@@ -144,13 +155,13 @@ def test_jax_long_square_sweepset_feature_matches_allen(
 @pytest.mark.parametrize("feature_name", SHORT_SQUARE_SWEEPSET_FEATURE_NAMES)
 def test_jax_short_square_sweepset_feature_matches_allen(
     specimen_cell_context,
-    precomputed_sweepset_vectors,
+    precomputed_short_square_vectors,
     feature_name: str,
 ):
     # Note: this extractor is already filtered by Allen's cell processing to
     # common-amplitude spiking short-square sweeps.
-    ext = precomputed_sweepset_vectors["short_square"]["ext"]
-    vectors = precomputed_sweepset_vectors["short_square"]["vectors"]
+    ext = precomputed_short_square_vectors["ext"]
+    vectors = precomputed_short_square_vectors["vectors"]
     expected = _expected_allen_sweepset_feature(
         "short_square",
         feature_name,
@@ -170,13 +181,13 @@ def test_jax_short_square_sweepset_feature_matches_allen(
 @pytest.mark.parametrize("feature_name", RAMP_SWEEPSET_FEATURE_NAMES)
 def test_jax_ramp_sweepset_feature_matches_allen(
     specimen_cell_context,
-    precomputed_sweepset_vectors,
+    precomputed_ramp_vectors,
     feature_name: str,
 ):
     # Note: this extractor is already filtered by Allen's cell processing to
     # spiking ramp sweeps.
-    ext = precomputed_sweepset_vectors["ramp"]["ext"]
-    vectors = precomputed_sweepset_vectors["ramp"]["vectors"]
+    ext = precomputed_ramp_vectors["ext"]
+    vectors = precomputed_ramp_vectors["vectors"]
     expected = _expected_allen_sweepset_feature(
         "ramp",
         feature_name,
