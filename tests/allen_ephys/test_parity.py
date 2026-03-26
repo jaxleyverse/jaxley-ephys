@@ -7,9 +7,6 @@ import pytest
 from allen_ephys.ephys_extractor import EphysSweepFeatureExtractor
 
 
-pytestmark = pytest.mark.filterwarnings("error")
-
-
 STIMULUS_KINDS = ("long_square", "short_square", "ramp")
 SPIKE_FEATURE_NAMES = (
     "fast_trough_t",

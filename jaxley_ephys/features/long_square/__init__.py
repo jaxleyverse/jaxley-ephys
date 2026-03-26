@@ -9,15 +9,20 @@ from .sweep import (
     mean_isi,
     median_isi,
     peak_deflect,
+    peak_deflect_index,
     sag,
     stim_amp,
     tau,
     v_baseline,
 )
-from .sweepset import compute_sweepset_features
+from .sweepset import (
+    SWEEPSET_FEATURE_FUNCTIONS,
+    compute_sweepset_features,
+)
 
 __all__ = [
     "SWEEP_FEATURE_FUNCTIONS",
+    "SWEEPSET_FEATURE_FUNCTIONS",
     "adapt",
     "latency",
     "isi_cv",
@@ -29,6 +34,7 @@ __all__ = [
     "tau",
     "sag",
     "peak_deflect",
+    "peak_deflect_index",
     "stim_amp",
     "compute_sweep_features",
     "compute_sweepset_features",

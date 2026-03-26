@@ -145,7 +145,6 @@ Style conventions:
   - cell level: `v[S, T]`, `t[S, T]`, optional `i[S, T]`
   - batched cells: `v[C, S, T]`
 - Keep feature APIs functional and explicit
-- Include optional `precomputed` dict where feature reuse is useful
 
 ## Error Handling
 - Validate input shape and key assumptions at boundaries

@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "jaxley-ephys"
 version = "0.1.0"
@@ -14,10 +18,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "jaxley>=0.13.0",
     "jupyter>=1.1.1",
     "allensdk>=0.16.3",
     "pre-commit>=4.5.1",
     "pytest>=9.0.2",
     "ruff>=0.15.4",
 ]
+
+[tool.setuptools.packages.find]
+include = ["jaxley_ephys*"]

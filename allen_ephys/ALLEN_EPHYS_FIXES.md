@@ -27,6 +27,13 @@ Changes relative to original AllenSDK implementation.
   - `estimate_time_constant`: pass `min_rsme=1.0` to
     `fit_membrane_time_constant` so corrected RMSE values for valid traces are
     not rejected wholesale by the legacy `1e-4` threshold.
+  - `estimate_time_constant`: when time-constant fitting fails (fit-window
+    detection or optimizer failures), emit `RuntimeWarning` including the
+    quoted exception and return `nan` instead of raising. This keeps downstream
+    sweep/cell feature computation resilient while surfacing the failure cause.
+  - `estimate_time_constant` / `estimate_sag`: gate to hyperpolarizing sweeps
+    and return `nan` for non-hyperpolarizing contexts. This avoids attempting
+    hyperpolarization-only computations on depolarizing traces.
 
 ## 3) Unit alignment with Allen DB
 - `allen_ephys/ephys_extractor.py`
@@ -57,6 +64,13 @@ Changes relative to original AllenSDK implementation.
     falls back to short-square stimulus amplitude
   - sweep-level `num_spikes` parity uses NWB `index_range` windows to align
     with Allen DB sweep metadata semantics
+  - sweep-level `peak_deflect` parity uses tuple normalization in tests:
+    compare value and index separately as `peak_deflect` and
+    `peak_deflect_index`
+  - stimulus amplitude parity policy in session fixtures:
+    - long-square sweeps use `_step_stim_amp`
+    - short-square sweeps use `_short_step_stim_amp`
+    - ramp sweeps intentionally leave calculator unset (expect `stim_amp = nan`)
 
 ## 5) Canonical stimulus selection in preprocessing
 - `tests/load_testdata.py`
