@@ -26,9 +26,6 @@ def _allen_and_jax(name: str):
     return t, v, allen._spikes_df, jax
 
 
-@pytest.mark.xfail(
-    reason="current implementation: thresholds 2 samples early", strict=False
-)
 @pytest.mark.parametrize("name", ["spike_test_pair", "spike_test_high_init_dvdt"])
 def test_fixture_spike_table_matches_allen(name):
     _, _, table, jax = _allen_and_jax(name)
@@ -39,10 +36,6 @@ def test_fixture_spike_table_matches_allen(name):
         assert not mismatches(column, expected, actual).any(), column
 
 
-@pytest.mark.xfail(
-    reason="current implementation smooths dV/dt for variable dt instead of not filtering",
-    strict=False,
-)
 def test_variable_dt_fixture_keeps_dvdt_aligned():
     """The trace repeats one time stamp (dt == 0). Allen drops that dV/dt sample,
     which shifts every later dV/dt index by one relative to ``v``; jaxley_ephys

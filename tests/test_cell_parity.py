@@ -28,7 +28,6 @@ LONG_SQUARE_FEATURES = (
     "tau",
     "v_baseline",
 )
-KNOWN_GAPS = {"tau": "sweep-level tau is a grid search (see test_parity.KNOWN_GAPS)"}
 
 
 def _vectors(results, kind: str) -> dict:
@@ -43,9 +42,7 @@ def _vectors(results, kind: str) -> dict:
 
 
 @pytest.mark.parametrize("feature", LONG_SQUARE_FEATURES)
-def test_long_square_cell_feature(request, reference, results, feature):
-    if feature in KNOWN_GAPS:
-        request.applymarker(pytest.mark.xfail(reason=KNOWN_GAPS[feature], strict=False))
+def test_long_square_cell_feature(reference, results, feature):
     vectors = _vectors(results, "long_square")
     computed = float(long_square_sweepset(vectors, feature_names=(feature,))[feature])
     expected = reference["cell"]["long_square"][feature]

@@ -77,6 +77,8 @@ Exit criteria:
 - Every feature required for JAX reimplementation has a stable Allen reference path.
 
 ## Subgoal 5 - Implement JAX feature primitives and sweep-level features
+> 2026-10-19 review: parity gaps remain on the full cached panel; continued in Subgoals 15-17.
+
 Goal: Build clean, functional JAX-first sweep feature functions with parity checks.
 
 - [x] Create runtime package layout under `jaxley_ephys/` (underscore naming)
@@ -95,6 +97,8 @@ Exit criteria:
 - Sweep-level JAX features for all three stimulus types pass parity tests.
 
 ## Subgoal 6 - Implement JAX sweepset-level features and parity tests
+> 2026-10-19 review: parity gaps remain on the full cached panel; continued in Subgoals 15-17.
+
 Goal: Compute sweepset features from sweep-level feature vectors with strict Allen parity.
 
 - [x] Define sweepset feature API around sweep-feature vectors (e.g. `ft_name(sweep_ft1, sweep_ft2, ...)`)
@@ -106,9 +110,30 @@ Goal: Compute sweepset features from sweep-level feature vectors with strict All
 Exit criteria:
 - Sweepset-level JAX features pass parity tests and use sweep-feature-vector inputs.
 
+### Selected-feature parity regression (2026-10-19)
+
+- [x] Match Allen fast-trough analysis over peak-to-next-unclipped-threshold
+  (bounded by the declared window), rather than reusing the event downstroke's
+  shorter peak-to-voltage-trough search. Add a deterministic late-voltage-drop
+  regression for fast-trough indices/voltage and AP width, including JIT execution.
+  This is a narrowly scoped correctness fix requested by the jaxley-bench feature
+  integration; no advanced/burst features or optimization subgoals are started.
+  The independent late-voltage-drop/JIT regression passes, as do jaxley-bench's
+  selected-feature parity cases on all ten current HH references and one-/two-spike
+  predictions. No cached Allen datasets were downloaded or modified.
+
 ## Subgoal 7 - Optimize codebase and computational efficiency
 Goal: Improve performance/clarity while preserving behavior.
 
+- [x] User-approved integration simplification (2026-10-19): make the existing
+  `compute_spike_features` entrypoint own shared derivative computation, JIT and
+  optional automatic capacity (`max_spikes=None`). Preserve explicit fixed-capacity
+  use and validated feature outputs; remove equivalent machinery from jaxley-bench.
+  Four deterministic extraction regressions and the existing four spike-integrity
+  tests pass, including explicit-capacity jit/vmap and eager overflow rejection.
+  All 33 benchmark feature tests still pass against Allen; no feature definitions,
+  downstream scores or cached Allen data were changed. This completes only the
+  requested integration simplification, not the rest of Subgoal 7.
 - [ ] Profile hotspots in sweep and cell feature computation
 - [x] Remove redundant computations via reusable intermediate results
 - [ ] Keep APIs simple and avoid overengineering
@@ -208,6 +233,47 @@ Goal: Compute cell-level features from sweep/sweepset building blocks after swee
 Exit criteria:
 - Cell-level JAX features pass parity tests and work on batched inputs.
 
+## Subgoal 15 - Parity harness against cached vendored-Allen outputs
+Goal: Compare every sweep and cell of the cached panel with vendored Allen, fast and in CI (2026-10-19 review, step 1).
+
+- [x] Cache vendored-Allen outputs per specimen (`tests/build_reference.py`, `tests/utils/allen_reference.py`): `cell_extractor_for_nwb` parameters, float64 inputs, full spike tables, sweep features, cell features; stale-cache detection
+- [x] Parity tests on every sweep (`tests/test_parity.py`) and cell features (`tests/test_cell_parity.py`); current gaps listed as non-strict xfails
+- [x] Allen's own fixture traces (`tests/test_allen_fixtures.py`), seeded synthetic traces covering rare branches (`tests/test_fuzz.py`), JAX behaviour (`tests/test_jax_behavior.py`)
+- [x] Remove superseded jaxley_ephys tests and helpers (`tests/test_parity/`, `tests/test_integrity/`, `tests/test_event_detection.py`, `tests/utils/feature_cache.py`, `tests/utils/jax_feature_contract.py`); tests of the vendored Allen code (`tests/allen_ephys/`) run with `--allen`
+- [x] All interspike-interval features in ms (vendored `median_isi`, `first_isi`)
+- [x] CI: lint, Allen reference, test suite
+
+Exit criteria:
+- Harness runs on all cached specimens with the remaining gaps documented; CI runs it on one specimen.
+
+## Subgoal 16 - Allen-exact O(T) spike detection and sweep features
+Goal: Replace event detection and spike/sweep features with the review prototype (step 2).
+
+- [x] `calculate_dvdt`, `detect_spikes` -> `Spikes`, `spike_features`, `sweep_features` with Allen parameter names, optional current, ISI features in ms
+- [x] Public entry points jitted internally (static `max_spikes`/`filter`) so repeated calls with shared shapes (loops over cells and sweepsets) are fast
+- [x] Port `tests/regression/` (added by the jaxley-bench integration session) to the new API; jaxley-bench itself is adapted separately by the user
+- [x] Empty `KNOWN_GAPS` in `tests/test_parity.py`; fixtures and fuzz pass on the default specimen
+- [x] Remind the user to run the full-panel calibration (`uv run python -m pytest --num_specimens 8`) on a machine with more memory (deferred 2026-10-19; reminded at the end of this subgoal)
+- [x] `detect_spikes` raises like Allen for a filter cutoff at or above the Nyquist frequency (otherwise no spikes would be found silently); NaN dV/dt when `t` is traced
+- [x] (user request) Fill in `examples/00_basics.ipynb` up to the vmap example and port `dev.ipynb` to the new API
+- [x] (user request) Dependency split: runtime `jax` + `numpy`; `allen` extra (`pandas`, `scipy`) for `allen_ephys`, which is now part of the wheel together with its license; `dev` dependency group (PEP 735) for tests, notebooks and tooling
+
+Exit criteria:
+- Spike and sweep parity on all cached specimens without xfails (documented deviations only). Verified on the default specimen; the full panel awaits the user's calibration run.
+
+## Subgoal 17 - Cell-level features following Allen's conventions
+Goal: Replace the nanmean sweepset aggregates with what Allen computes (step 3).
+
+- [ ] Long-square (rheobase, f-I slope, sag, input resistance, tau, baseline, hero sweep), short-square (common amplitude, first-spike means, adjusted detection parameters) and ramp features
+- [ ] `cell_record` with Allen DB feature names (DB-matching heuristics stay in the DB comparison tests)
+- [ ] Batching helper for sweeps of unequal length (exact filtering)
+- [ ] Fill in the sweepset and cell-feature cells of `examples/00_basics.ipynb`
+
+Exit criteria:
+- Cell-level parity with vendored Allen on all cached specimens.
+
+Steps 4 (performance polish) and 5 (publication) of the review continue in Subgoals 7/11 and 10.
+
 ## Implementation Protocol (Feature Work)
 
 This section is a required workflow contract for implementing JAX features.
@@ -293,3 +359,9 @@ This section is a required workflow contract for implementing JAX features.
 - 2026-03-17: Added persisted Allen extractor feature caching in `tests/testdata/allen_cache/specimen_<id>/ephys_features.{json,npz}` and wired `tests/conftest.py` to support `--use-cached-features`. Default mode computes/refreshes caches from `cell.process()`, while cached mode loads/injects sweep spike/sweep features plus processed extractor memberships back into cell/sweepset extractors so parity tests run unchanged while skipping Allen feature recomputation.
 - 2026-03-17: Improved parity-test runtime further with low-complexity optimizations: (1) reordered curated specimen priority so `--num_specimens 1` uses a lower-cost specimen first, (2) aligned sweep trace lengths by stimulus modality at fixture construction time in `tests/conftest.py` (instead of persisting extra cache metadata) to match batched-shape assumptions while keeping raw cache loading simple, and (3) removed duplicate `compute_dvdt` work in parity fixtures by passing precomputed `dvdt` into `detect_events`. Revalidated representative parity slices in cached/non-cached mode.
 - 2026-03-17: Simplified parity test structure further by making sweep parity atomic at function-call level (`SWEEP_FEATURE_FUNCTIONS[feature_name](...)` in `tests/test_parity/test_sweep_features.py`) and splitting sweepset precompute into modality-specific fixtures in `tests/test_parity/test_sweepset_features.py` to avoid unnecessary cross-modality setup work during targeted runs.
+- 2026-10-19: Full review of `jaxley_ephys`, tests and packaging (all-sweep parity harness on 8 cached specimens, fuzzing, benchmarks, O(T) prototype); findings and the agreed plan are reflected in Subgoals 15-17. Decisions: the vendored copy is the parity target (its ms units and NaN returns are deliberate); all interspike-interval features in ms; sweepset/cell level follows Allen's conventions; new API names (`detect_spikes`, `Spikes`, `calculate_dvdt`); current input optional; DB-matching heuristics stay in the DB comparison tests.
+- 2026-10-19: Completed Subgoal 15 (parity harness). Added `tests/build_reference.py` + `tests/utils/allen_reference.py` (vendored-Allen outputs per specimen as JSON under `tests/testdata/allen_reference/`, rebuilt in ~80 s for all 8 specimens, stale-cache detection via a hash of `allen_ephys/`), and `tests/test_parity.py` (every sweep, all 36 spike columns and 13 sweep features), `tests/test_cell_parity.py`, `tests/test_allen_fixtures.py`, `tests/test_fuzz.py` and `tests/test_jax_behavior.py`, all calling the library through `tests/utils/jax_runner.py`. Gaps of the current implementation are listed in `KNOWN_GAPS` as non-strict xfails. Removed `tests/test_parity/`, `tests/test_integrity/`, `tests/test_event_detection.py`, `tests/utils/feature_cache.py`, `tests/utils/jax_feature_contract.py` and `tests/allen_ephys/test_integrity.py`; Allen-vs-DB tests are marked `slow` (deselected by default). Vendored `median_isi`/`first_isi` now in ms. CI now lints, builds the reference and runs the suite. Default run: 155 passed, 27 xfailed, 27 xpassed, 0 failed in 1:48 (was > 3 h). A calibration run on all 8 specimens with the current implementation was stopped by the system for low memory (O(T * max_spikes) intermediates on the 200 kHz sweeps); `KNOWN_GAPS` is therefore calibrated on the default specimen plus the review results.
+- 2026-10-19: Subgoal 15 follow-up: documented the intended differences between jaxley_ephys and the vendored reference in `allen_ephys/ALLEN_EPHYS_FIXES.md` section 6 (Allen's `curve_fit` stopping early for tau, ill-posed tau fits, `dt == 0` index shift, baseline without start, inputs on which Allen raises, float precision, filter numerics) with matching code comments; cleaned up the duplicated DB-mapping notes. Removed the unused vendored `allen_ephys/feature_extractor.py` and unused test helpers (`SpecimenCase.representative_sweep`, `SweepRecord.is_hyperpol`); the reference builder now calls Allen's `mean_features_spike_zero` directly. Full-panel calibration deferred (user runs it on another machine after the refactor); jaxley-bench integration handled separately by the user.
+- 2026-10-19: Correction (user): the vendored Allen code is kept complete, both as the test reference and as a maintained version of the unmaintained AllenSDK feature extraction. Restored `allen_ephys/feature_extractor.py` and `tests/allen_ephys/test_integrity.py` (adapted to the new test helpers, with a local `specimen_sweepset_extractors` fixture in `tests/allen_ephys/conftest.py`). All tests of the vendored code (unit tests, integrity, Allen DB comparison) now run with `--allen` instead of a `slow` marker; CI runs them.
+
+- 2026-10-19: Completed Subgoal 16 (core rewrite). New `jaxley_ephys/{_ops,dvdt,spikes,sweep}.py` (O(T + K) segment-based detection; public, internally jitted `calculate_dvdt`, `detect_spikes` -> `Spikes`, `spike_features` and `sweep_features(sp, stimulus)` with Allen's parameter names and defaults, optional current, all ISI features in ms, `max_spikes=None` growing the capacity eagerly) replace `events.py`, `bessel.py`, `features/spikes.py` and `features/*/sweep.py`. `detect_spikes` raises like Allen when the filter cutoff is not below the Nyquist frequency (otherwise no spikes would be found silently); empty windows give a NaN/-1 deflection. Tests: all known-gap xfails removed, `tests/regression/` ported, `tests/test_bessel.py` replaced by `tests/test_dvdt.py`. Default run: 190 passed in 1:39; with `--allen`: 243 passed, 1 skipped in 2:57; no xfails. `examples/00_basics.ipynb` filled in up to the vmap example (sweepset/cell cells follow in Subgoal 17) and `dev.ipynb` ported; both executed. Dependencies (user request): runtime `jax` + `numpy`, `allen` extra (`pandas`, `scipy`) for `allen_ephys` (now in the wheel, with its license), `dev` dependency group; locked versions unchanged. Speed on the default specimen (CPU, after compilation): long square 201 ms/sweep (Allen 58), short square 53 ms (Allen 14), ramp 0.89 s (Allen 1.74 s); 6-8 s compilation per new sweep length. Under `vmap`, `tau`'s `while_loop` runs every sweep's fit over the full trace until the slowest one converges (559 vs 152 ms/sweep in a loop; 89 vs 73 ms without `tau`). These are inputs for Subgoals 7/11 (step 4).

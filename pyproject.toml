@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,23 +7,34 @@ name = "jaxley-ephys"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
+# allen_ephys (vendored AllenSDK code) keeps its own license
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES/*"]
 requires-python = ">=3.12"
 dependencies = [
     "jax>=0.9.1",
-    "matplotlib>=3.10.8",
     "numpy>=2.4.2",
+]
+
+[project.optional-dependencies]
+# Dependencies of allen_ephys, the vendored and maintained AllenSDK feature extraction
+allen = [
     "pandas>=3.0.1",
     "scipy>=1.17.1",
 ]
 
-[project.optional-dependencies]
+[tool.setuptools.packages.find]
+include = ["jaxley_ephys*", "allen_ephys*"]
+
+[tool.uv.sources]
+jaxley-ephys = { workspace = true }
+
+[dependency-groups]
 dev = [
-    "jupyter>=1.1.1",
     "allensdk>=0.16.3",
+    "jaxley-ephys[allen]",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.8",
     "pre-commit>=4.5.1",
     "pytest>=9.0.2",
     "ruff>=0.15.4",
 ]
-
-[tool.setuptools.packages.find]
-include = ["jaxley_ephys*"]

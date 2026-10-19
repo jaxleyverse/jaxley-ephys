@@ -1,15 +1,12 @@
 """Allen parity when a late voltage fall dominates post-spike dV/dt."""
 
-import jax
-import jax.numpy as jnp
 import numpy as np
+
 from allen_ephys.ephys_extractor import EphysSweepFeatureExtractor
-from jaxley_ephys import compute_dvdt, detect_events
-from jaxley_ephys.features import spikes
+from jaxley_ephys import detect_spikes, spike_features
 
 
 def test_late_voltage_drop_uses_allen_trough_analysis_interval():
-    jax.config.update("jax_enable_x64", True)
     t = np.arange(3201) * 0.000025
     v = np.interp(
         t,
@@ -20,20 +17,10 @@ def test_late_voltage_drop_uses_allen_trough_analysis_interval():
     oracle.process_spikes()
     assert len(oracle.spikes()) == 1
 
-    @jax.jit
-    def extract(t, v):
-        current = jnp.zeros_like(v)
-        dvdt = compute_dvdt(t, v, filter=10)
-        ev = detect_events(t, v, current, t[0], t[-1], dvdt=dvdt, max_spikes=8)
-        return (
-            spikes.fast_trough_index(t, v, current, ev, dvdt),
-            spikes.fast_trough_v(t, v, current, ev, dvdt),
-            spikes.width(t, v, current, ev, dvdt),
-        )
-
-    index, voltage, width = jax.device_get(extract(jnp.asarray(t), jnp.asarray(v)))
+    features = spike_features(detect_spikes(t, v, start=t[0], end=t[-1], max_spikes=8))
+    index, voltage = features["fast_trough_index"], features["fast_trough_v"]
     assert index[0] == oracle.spike_feature("fast_trough_index")[0]
     np.testing.assert_allclose(voltage[0], oracle.spike_feature("fast_trough_v")[0])
-    np.testing.assert_allclose(width[0], oracle.spike_feature("width")[0])
+    np.testing.assert_allclose(features["width"][0], oracle.spike_feature("width")[0])
     assert np.all(index[1:] == -1)
     assert np.all(np.isnan(voltage[1:]))

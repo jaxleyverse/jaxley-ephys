@@ -87,7 +87,16 @@ def results(specimen_id, reference) -> dict[str, list[dict]]:
                 "than the cache. Run: uv run python tests/build_reference.py --force"
             )
         out[kind] = [
-            analyse_sweep(s.t, s.v, s.i, s.start, s.end, s.dv_cutoff, s.thresh_frac)
+            analyse_sweep(
+                s.t,
+                s.v,
+                s.i,
+                s.start,
+                s.end,
+                stimulus=kind,
+                dv_cutoff=s.dv_cutoff,
+                thresh_frac=s.thresh_frac,
+            )
             for s in sweeps[kind]
         ]
     return out

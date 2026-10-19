@@ -88,9 +88,8 @@ Changes relative to original AllenSDK implementation.
   and `Short Square - Triple` when reading `ephys_sweeps.json`).
 
 ## 6) Known differences between jaxley_ephys and this reference
-Intended differences that the parity tests account for. Differences that are
-still to be fixed in jaxley_ephys are listed separately, with reasons, in
-`KNOWN_GAPS` in `tests/test_parity.py`.
+Intended differences that the parity tests account for; on everything else
+jaxley_ephys agrees with this reference to floating-point precision.
 
 - **tau: Allen's optimizer stops early.** `fit_membrane_time_constant` calls
   `scipy.optimize.curve_fit` with its default tolerances
@@ -113,11 +112,13 @@ still to be fixed in jaxley_ephys are listed separately, with reasons, in
 - **Baseline without a start time.** With `start=None`, `_get_baseline_voltage`
   searches for a flat interval using `np.abs(dv >= thresh)`; `abs` is applied
   to the comparison, so only dV/dt >= thresh counts as non-flat (upstream
-  bug). jaxley_ephys requires a start time for `v_baseline`.
+  bug). jaxley_ephys needs a start time for `v_baseline` and returns NaN for
+  it (and hence for `tau` and `sag`) without one.
 - **Inputs on which Allen raises** (`find_time_index` beyond the end of the
   trace, analysis windows shorter than the 15-sample filter padding, empty
-  windows, `argmax` of empty slices): jaxley_ephys cannot raise under `jit`
-  and returns NaN or -1 instead.
+  windows, `argmax` of empty slices, a filter cutoff at or above the Nyquist
+  frequency): jaxley_ephys cannot raise under `jit` and returns NaN or -1
+  instead (NaN dV/dt for the cutoff, so no spikes are detected).
 - **Float precision.** Run directly on the float32 NWB data, Allen computes
   some means (`v_baseline`, `sag`) in float32, about 1e-5 mV away from the
   float64 result; the reference therefore uses float64 inputs (section 5).

@@ -31,10 +31,6 @@ SWEEP_FEATURES = (
     "v_baseline",
     "sag",
 )
-CURRENT_GAPS = pytest.mark.xfail(
-    reason="current implementation lacks Allen's merge, re-find and ADP branches",
-    strict=False,
-)
 
 
 @pytest.fixture(scope="module")
@@ -58,7 +54,6 @@ def cases():
     return out
 
 
-@CURRENT_GAPS
 def test_spike_tables_match_allen(cases):
     problems = []
     for k, (table, _, jax) in enumerate(cases):
@@ -78,7 +73,6 @@ def test_spike_tables_match_allen(cases):
     assert not problems, f"{len(problems)} problems, e.g. {problems[:5]}"
 
 
-@CURRENT_GAPS
 def test_sweep_features_match_allen(cases):
     problems = [
         f"trace {k}: {name} allen {features[name]}, jax {jax['features'][name]}"

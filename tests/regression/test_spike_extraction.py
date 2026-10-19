@@ -1,80 +1,57 @@
-"""The public extraction call owns compilation, shared dV/dt and safe capacity."""
+"""The public detection call owns compilation and a safe spike capacity."""
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
-from jaxley_ephys.features import spikes
+
+from jaxley_ephys import detect_spikes, spike_features
+
+DT = 0.000025  # s
+# One spike-like waveform: (time in ms, voltage in mV), 4 ms long
+SPIKE = (np.array([0, 1, 1.3, 2, 4]), np.array([-65, -10, 35, -75, -65]))
+
+
+def _spike_train(n_spikes: int) -> tuple[np.ndarray, np.ndarray]:
+    """Spikes every 15 ms from 10 ms on, at -65 mV in between."""
+    t = np.arange(round((10 + 15 * n_spikes) / 1000 / DT) + 1) * DT
+    times = np.concatenate([10 + 15 * k + SPIKE[0] for k in range(n_spikes)])
+    return t, np.interp(t, times / 1000, np.tile(SPIKE[1], n_spikes))
 
 
 @pytest.fixture
 def recording():
-    jax.config.update("jax_enable_x64", True)
-    t = np.arange(1601) * 0.000025
-    v = np.interp(
-        t,
-        np.array([0, 10, 11, 11.3, 12, 14, 25, 26, 26.3, 27, 29, 40]) / 1000,
-        [-65, -65, -10, 35, -75, -65, -65, -10, 35, -75, -65, -65],
-    )
-    return jnp.asarray(t), jnp.asarray(v), jnp.zeros_like(t)
+    return _spike_train(2)
 
 
-def test_auto_capacity_matches_explicit_extraction(recording):
-    t, v, i = recording
+def test_auto_capacity_matches_explicit_capacity(recording):
     names = ("peak_t", "threshold_v", "fast_trough_v", "width")
-    fixed = spikes.compute_spike_features(
-        t, v, i, t[0], t[-1], max_spikes=8, feature_names=names
-    )
-    automatic = spikes.compute_spike_features(
-        t, v, i, t[0], t[-1], max_spikes=None, feature_names=names
-    )
+    fixed = spike_features(detect_spikes(*recording, max_spikes=8))
+    automatic = spike_features(detect_spikes(*recording, max_spikes=None))
     assert np.count_nonzero(np.isfinite(automatic["peak_t"])) == 2
     for name in names:
-        np.testing.assert_allclose(automatic[name], fixed[name], equal_nan=True)
+        np.testing.assert_allclose(automatic[name][:8], fixed[name], equal_nan=True)
+        assert np.all(np.isnan(automatic[name][8:]))
 
 
 def test_explicit_capacity_remains_jittable(recording):
-    t, v, i = recording
-
     @jax.jit
-    def extract(t, v, i):
-        return spikes.compute_spike_features(
-            t, v, i, t[0], t[-1], max_spikes=8, feature_names=("peak_t",)
-        )["peak_t"]
+    def peak_times(t, v):
+        return spike_features(detect_spikes(t, v, max_spikes=8))["peak_t"]
 
-    assert np.count_nonzero(np.isfinite(extract(t, v, i))) == 2
+    assert np.count_nonzero(np.isfinite(peak_times(*recording))) == 2
+
+
+def test_auto_capacity_needs_concrete_inputs(recording):
+    with pytest.raises(ValueError, match="max_spikes=None"):
+        jax.jit(lambda t, v: detect_spikes(t, v, max_spikes=None).peak)(*recording)
 
 
 def test_public_call_raises_instead_of_returning_truncated_features(recording):
-    t, v, i = recording
-    with pytest.raises(ValueError, match="overflowed max_spikes=1"):
-        spikes.compute_spike_features(
-            t, v, i, t[0], t[-1], max_spikes=1, feature_names=("peak_t",)
-        )
+    with pytest.raises(ValueError, match="max_spikes=1"):
+        detect_spikes(*recording, max_spikes=1)
 
 
-def test_automatic_capacity_counts_all_putative_crossings_once(monkeypatch):
-    derivative = jnp.asarray(np.r_[np.tile([-1.0, 25.0], 70), np.zeros(60)])
-    calls = []
-
-    def dvdt(*args, **kwargs):
-        calls.append("derivative")
-        return derivative
-
-    def extract(*args, max_spikes, **kwargs):
-        calls.append(max_spikes)
-        return False, {"peak_t": jnp.full(max_spikes, jnp.nan)}
-
-    monkeypatch.setattr(spikes, "_spike_derivative", dvdt)
-    monkeypatch.setattr(spikes, "_compute_spike_features", extract)
-    t = jnp.arange(200) / 1000
-    spikes.compute_spike_features(
-        t,
-        jnp.zeros(200),
-        jnp.zeros(200),
-        t[0],
-        t[-1],
-        max_spikes=None,
-        feature_names=("peak_t",),
-    )
-    assert calls == ["derivative", 128]
+def test_auto_capacity_grows_until_all_spikes_fit():
+    sp = detect_spikes(*_spike_train(300), max_spikes=None)
+    assert int(sp.n_spikes) == 300
+    assert not bool(sp.overflow)

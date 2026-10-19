@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from jaxley_ephys import detect_spikes
 from tests.utils.jax_runner import extract, extract_batch
 from tests.utils.simulate_testdata import simulate_sweep, simulate_sweepset
 
@@ -58,10 +59,6 @@ def test_gradients_are_finite(sweep):
     assert bool(jnp.all(jnp.isfinite(grad))) and bool(jnp.any(grad != 0))
 
 
-@pytest.mark.xfail(
-    reason="current implementation: lax.scan carry dtype mismatch for float32 input",
-    strict=False,
-)
 def test_float32_inputs_are_accepted(sweep):
     as32 = [np.asarray(x, np.float32) for x in sweep]
     reference = extract(*sweep, START, END)
@@ -77,3 +74,19 @@ def test_mismatched_shapes_raise(sweep):
     t, v, i = sweep
     with pytest.raises(ValueError):
         extract(t, v[:-1], i, START, END)
+
+
+def test_filter_above_nyquist_raises_like_allen(sweep):
+    t, v, i = sweep  # 40 kHz sampling: Nyquist frequency 20 kHz
+    with pytest.raises(ValueError, match="Nyquist"):
+        detect_spikes(t, v, i, START, END, filter=25.0)
+    traced = jax.jit(lambda t: detect_spikes(t, v, i, START, END, filter=25.0).dvdt)(t)
+    assert np.all(np.isnan(traced))
+
+
+def test_empty_window_gives_nan_instead_of_raising(sweep):
+    """Allen raises on an empty analysis window (argmin of an empty slice)."""
+    features = extract(*sweep, START, START)[3]
+    assert int(features["peak_deflect_index"]) == -1
+    for name in ("peak_deflect", "sag", "tau"):
+        assert np.isnan(features[name]), name
