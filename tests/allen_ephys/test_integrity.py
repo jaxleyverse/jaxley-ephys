@@ -10,7 +10,8 @@ from allen_ephys.ephys_extractor import (
     EphysSweepFeatureExtractor,
     EphysSweepSetFeatureExtractor,
 )
-from tests.utils.jax_feature_contract import SPIKE_FEATURE_NAMES, SWEEP_FEATURE_NAMES
+from tests.utils.allen_reference import SWEEP_FEATURES as SWEEP_FEATURE_NAMES
+from tests.utils.parity import SPIKE_COLUMNS as SPIKE_FEATURE_NAMES
 
 
 STIMULUS_KINDS = ("long_square", "short_square", "ramp")

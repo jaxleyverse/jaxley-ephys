@@ -79,11 +79,6 @@ class SweepRecord:
     def has_spikes(self) -> bool:
         return (self.num_spikes or 0) > 0
 
-    @property
-    def is_hyperpol(self) -> bool:
-        amp = self.stimulus_absolute_amplitude
-        return amp is not None and amp < 0
-
 
 @dataclass
 class SpecimenCase:
@@ -114,15 +109,12 @@ class SpecimenCase:
         *,
         kind: str | None = None,
         has_spikes: bool | None = None,
-        is_hyperpol: bool | None = None,
     ) -> list[SweepRecord]:
         out = []
         for rec in self.sweep_records:
             if kind is not None and rec.kind != kind:
                 continue
             if has_spikes is not None and rec.has_spikes != has_spikes:
-                continue
-            if is_hyperpol is not None and rec.is_hyperpol != is_hyperpol:
                 continue
             out.append(rec)
         return out
@@ -132,40 +124,14 @@ class SpecimenCase:
         *,
         kind: str,
         has_spikes: bool | None = None,
-        is_hyperpol: bool | None = None,
     ) -> SweepRecord:
-        records = self.records(
-            kind=kind, has_spikes=has_spikes, is_hyperpol=is_hyperpol
-        )
+        records = self.records(kind=kind, has_spikes=has_spikes)
         if not records:
             raise ValueError(
                 f"specimen {self.specimen_id}: no sweep for "
-                f"kind={kind}, has_spikes={has_spikes}, is_hyperpol={is_hyperpol}"
+                f"kind={kind}, has_spikes={has_spikes}"
             )
         return records[0]
-
-    def representative_sweep(self, kind: str):
-        if kind == "long_spiking":
-            record = self.require_record(kind="long_square", has_spikes=True)
-        elif kind == "long_no_spike":
-            record = self.require_record(kind="long_square", has_spikes=False)
-        elif kind == "long_hyperpol":
-            record = self.require_record(kind="long_square", is_hyperpol=True)
-        elif kind == "short_square":
-            short_spiking = self.records(kind="short_square", has_spikes=True)
-            record = (
-                short_spiking[0]
-                if short_spiking
-                else self.require_record(kind="short_square")
-            )
-        elif kind == "ramp":
-            ramp_spiking = self.records(kind="ramp", has_spikes=True)
-            record = (
-                ramp_spiking[0] if ramp_spiking else self.require_record(kind="ramp")
-            )
-        else:
-            raise ValueError(f"Unknown representative kind: {kind}")
-        return self.make_sweep(record)
 
     def trace_for(
         self, sweep_number: int

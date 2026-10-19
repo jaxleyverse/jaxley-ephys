@@ -767,6 +767,9 @@ def calculate_dvdt(v, t, filter=None):
         dv = np.diff(v)
 
     dt = np.diff(t)
+    # Dropping samples where dt == 0 shifts every later dV/dt index by one
+    # relative to v; jaxley_ephys keeps dV/dt aligned instead (NaN at dt == 0),
+    # see ALLEN_EPHYS_FIXES.md, section 6.
     dvdt = 1e-3 * dv[dt != 0] / dt[dt != 0]  # in V/s = mV/ms
 
     # Remove nan values (in case any dt values are NaN)
@@ -915,6 +918,10 @@ def fit_membrane_time_constant(v, t, start, end, min_rsme=1e-4):
     t_window = (t[start_index:end_index] - t[start_index]).astype(np.float64)
     v_window = v[start_index:end_index].astype(np.float64)
     try:
+        # Default tolerances (ftol = xtol = 1.49e-8): Levenberg-Marquardt stops
+        # before the least-squares optimum, up to 1.1e-3 (relative) away in tau
+        # on the cached specimens. jaxley_ephys fits to the optimum, so tau is
+        # compared with rtol 2e-3, see ALLEN_EPHYS_FIXES.md, section 6.
         popt, pcov = curve_fit(_exp_curve, t_window, v_window, p0=guess)
     except RuntimeError:
         logging.info("Curve fit for membrane time constant failed")

@@ -12,8 +12,11 @@ wheels/
 # Legacy AllenSDK default cache path (avoid new cache here)
 cell_types/
 
-# Re-downloadable AllenSDK raw cache; keep processed test artifacts in tests/testdata/
-tests/testdata/allen_cache/
+# Re-downloadable AllenSDK raw cache (directory or symlink); keep processed test artifacts in tests/testdata/
+tests/testdata/allen_cache
+
+# Vendored-Allen reference outputs, rebuilt by tests/build_reference.py
+tests/testdata/allen_reference/
 
 # Local preprocessed Allen traces (large, reproducible)
 tests/testdata/cell_*_data.npz

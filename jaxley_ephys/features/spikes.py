@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
+from functools import partial
 
+import jax
 import jax.numpy as jnp
 from jax import Array
 
@@ -32,21 +34,26 @@ def _downstroke_valid(ev: Events) -> Array:
 def _fast_trough_index_from_events(ev: Events, dvdt: Array) -> tuple[Array, Array]:
     t_len = dvdt.shape[0]
     x = jnp.arange(t_len)
-    next_thr = jnp.where(
-        jnp.concatenate([ev.spike_valid[1:], jnp.asarray([False])]),
-        jnp.concatenate([ev.threshold_idxs[1:], jnp.asarray([t_len - 1])]),
-        t_len - 1,
+    end_idx = jnp.max(jnp.where(ev.window, x, 0))
+    usable = ev.spike_valid & (~ev.clipped)
+    order = jnp.arange(ev.threshold_idxs.shape[0])
+    next_thr = jnp.min(
+        jnp.where(
+            (order[None, :] > order[:, None]) & usable[None, :],
+            ev.threshold_idxs[None, :],
+            end_idx,
+        ),
+        axis=1,
     )
 
     def one_fast(k: Array) -> Array:
-        down = ev.downstroke_idxs[k]
+        peak = ev.peak_idxs[k]
         nxt = next_thr[k]
-        valid = (
-            ev.spike_valid[k]
-            & (~ev.clipped[k])
-            & _downstroke_valid(ev)[k]
-            & (nxt > down)
-        )
+        valid = usable[k] & (peak >= 0) & (nxt > peak)
+        # Allen's trough analysis finds its own downstroke over the entire
+        # peak-to-next-unclipped-threshold interval. The event downstroke only
+        # searches as far as the minimum-voltage trough and is not interchangeable.
+        down = jnp.argmin(jnp.where(valid & (x >= peak) & (x < nxt), dvdt, jnp.inf))
         target = 0.01 * dvdt[jnp.maximum(down, 0)]
         m = valid & (x >= down) & (x < nxt)
         cand = jnp.where(m & (dvdt >= target), x, t_len + 1)
@@ -346,17 +353,23 @@ SPIKE_FEATURE_FUNCTIONS: dict[
 }
 
 
-def compute_spike_features(
+@partial(jax.jit, static_argnames=("filter",))
+def _spike_derivative(t: Array, v: Array, *, filter: float | None) -> Array:
+    return compute_dvdt(t, v, filter=filter)
+
+
+@partial(jax.jit, static_argnames=("max_spikes", "feature_names"))
+def _compute_spike_features(
     t: Array,
     v: Array,
     i: Array,
     start: Array,
     end: Array,
+    dvdt: Array,
     *,
-    max_spikes: int = 256,
-    dvdt_filter: float | None = 10.0,
-    feature_names: tuple[str, ...] | None = None,
-) -> dict[str, Array]:
+    max_spikes: int,
+    feature_names: tuple[str, ...],
+) -> tuple[Array, dict[str, Array]]:
     ev = detect_events(
         t,
         v,
@@ -364,24 +377,61 @@ def compute_spike_features(
         start,
         end,
         max_spikes=max_spikes,
-        dvdt_filter=dvdt_filter,
+        dvdt=dvdt,
     )
-    dvdt = compute_dvdt(t, v, filter=dvdt_filter)
 
     out: dict[str, Array] = {}
-    names = (
-        feature_names
-        if feature_names is not None
-        else tuple(SPIKE_FEATURE_FUNCTIONS.keys())
-    )
-    for key in names:
+    for key in feature_names:
         if key not in SPIKE_FEATURE_FUNCTIONS:
             raise KeyError(f"unknown spike feature '{key}'")
         fn = SPIKE_FEATURE_FUNCTIONS[key]
         value = fn(t, v, i, ev, dvdt)
         if value.shape != (max_spikes,):
             raise ValueError(
-                f"spike feature '{key}' returned shape {value.shape}, expected {(max_spikes,)}"
+                f"spike feature '{key}' returned shape {value.shape}, "
+                f"expected {(max_spikes,)}"
             )
         out[key] = value
+    return ev.overflow, out
+
+
+def compute_spike_features(
+    t: Array,
+    v: Array,
+    i: Array,
+    start: Array,
+    end: Array,
+    *,
+    max_spikes: int | None = 256,
+    dvdt_filter: float | None = 10.0,
+    feature_names: tuple[str, ...] | None = None,
+) -> dict[str, Array]:
+    """Extract selected spike features from aligned ``t/v/i[T]`` arrays.
+
+    Time is in seconds, voltage in mV. Continuous features are NaN-padded;
+    indices use -1. Filtering/detection are shared across features and compiled
+    internally. Eager calls raise on capacity overflow rather than truncate.
+
+    ``max_spikes=None`` sizes the output from all putative derivative crossings
+    (at least 8 slots, rounded up to a power of two). This convenience mode is
+    eager-only; use an explicit static capacity inside ``jit``/``vmap``.
+    """
+    dvdt = _spike_derivative(t, v, filter=dvdt_filter)
+    if max_spikes is None:
+        above = dvdt >= 20.0
+        count = int(jnp.sum(~above[:-1] & above[1:]))
+        max_spikes = max(8, 1 << max(0, count - 1).bit_length())
+    names = (
+        tuple(SPIKE_FEATURE_FUNCTIONS)
+        if feature_names is None
+        else tuple(feature_names)
+    )
+    overflow, out = _compute_spike_features(
+        t, v, i, start, end, dvdt, max_spikes=max_spikes, feature_names=names
+    )
+    if not isinstance(overflow, jax.core.Tracer) and bool(overflow):
+        raise ValueError(
+            f"detect_events overflowed max_spikes={max_spikes}; "
+            "increase max_spikes or use max_spikes=None"
+        )
     return out

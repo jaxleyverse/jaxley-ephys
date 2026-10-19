@@ -306,8 +306,8 @@ class EphysSweepFeatureExtractor:
                 "latency": ft.latency(t, thresholds, self.start),
                 "isi_cv": (isis.std() / isis.mean()) if len(isis) >= 1 else np.nan,
                 "mean_isi": 1e3 * isis.mean() if len(isis) > 0 else np.nan,
-                "median_isi": np.median(isis),
-                "first_isi": isis[0] if len(isis) >= 1 else np.nan,
+                "median_isi": 1e3 * np.median(isis),
+                "first_isi": 1e3 * isis[0] if len(isis) >= 1 else np.nan,
                 "avg_rate": ft.average_rate(t, thresholds, self.start, self.end),
             }
 
@@ -446,7 +446,10 @@ class EphysSweepFeatureExtractor:
                 v, t, self.start - self.baseline_interval, self.start
             )
 
-        # Otherwise try to find an interval where things are pretty flat
+        # Otherwise try to find an interval where things are pretty flat.
+        # Upstream bug kept as is: `np.abs` is applied to the comparison, so only
+        # dV/dt >= thresh (not |dV/dt| >= thresh) counts as non-flat. jaxley_ephys
+        # requires a start time for v_baseline, see ALLEN_EPHYS_FIXES.md, section 6.
         dv = ft.calculate_dvdt(v, t, filter_frequency)
         non_flat_points = np.flatnonzero(np.abs(dv >= self.baseline_detect_thresh))
         flat_intervals = t[non_flat_points[1:]] - t[non_flat_points[:-1]]

@@ -26,11 +26,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev
 
-      - name: Generate Allen cache smoke fixture
+      - name: Lint
+        run: uv run ruff check jaxley_ephys tests
+
+      - name: Download Allen test specimen
         run: uv run python tests/load_testdata.py --cell-ids 525011903
 
-      - name: Run vendored Allen tests
-        run: uv run python -m pytest tests/allen_ephys/test_allen_features.py tests/allen_ephys/test_allen_extractor.py -vv
+      - name: Build Allen reference
+        run: uv run python tests/build_reference.py
+
+      - name: Run tests (including the vendored Allen code)
+        run: uv run python -m pytest -q -rfxX --allen
 
       - name: Prune uv cache
         run: uv cache prune --ci
