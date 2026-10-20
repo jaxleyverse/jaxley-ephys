@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from jax import Array, lax
 
 from ._ops import masked_mean, take
-from .spikes import Spikes, find_time_index
+from .spikes import Spikes, _analysed, find_time_index
 
 BASELINE_INTERVAL = 0.1  # s
 SAG_PEAK_WIDTH = 0.005  # s
@@ -176,8 +176,11 @@ def _fit_exp(
     """Least-squares fit of ``y0 + a * exp(-k * x)`` over ``mask``; returns ``(a, k, y0)``.
 
     Like Allen's ``curve_fit`` call this is a local search started at ``k = 50``:
-    ``a`` and ``y0`` are solved exactly for each ``k`` (variable projection) and ``k``
-    is updated with damped Gauss-Newton steps on the reduced problem.
+    ``a`` and ``y0`` are solved exactly for each ``k`` (variable projection) and
+    ``log(k)`` takes Newton steps on the reduced problem within a trust region.
+    The curvature is the secant of the exact gradient between the last two
+    accepted points, else (or if not positive) the Gauss-Newton one, which alone
+    converges only linearly when the exponential fits the response poorly.
     """
     w = mask.astype(x.dtype)
     x = jnp.where(mask, x, 0.0)
@@ -186,41 +189,63 @@ def _fit_exp(
     y_ref = jnp.sum(jnp.where(mask, y, 0.0)) / jnp.maximum(jnp.sum(w), 1.0)
     y = jnp.where(mask, y - y_ref, 0.0)
     n, sy, syy = jnp.sum(w), jnp.sum(w * y), jnp.sum(w * y * y)
+    span = jnp.max(x)  # length of the fit window
+    first = jnp.min(jnp.where(mask & (x > 0), x, jnp.inf))  # second sample
 
     def solve(log_k):
-        e = w * jnp.exp(-jnp.exp(log_k) * x)
+        """Linear parameters, SSE, and the gradient and Gauss-Newton curvature of
+        the (halved) SSE in log(k), with a and y0 projected out (Kaufman)."""
+        k = jnp.exp(log_k)
+        e = w * jnp.exp(-k * x)
         see, se, sey = jnp.sum(e * e), jnp.sum(e), jnp.sum(e * y)
         sxee, sxe = jnp.sum(x * e * e), jnp.sum(x * e)
         sxxee, sxey = jnp.sum(x * x * e * e), jnp.sum(x * e * y)
         det = see * n - se * se
         a, y0 = (sey * n - sy * se) / det, (see * sy - se * sey) / det
         sse = syy - a * sey - y0 * sy
-        # Gauss-Newton step in log(k) with a, y0 projected out (Kaufman).
         jr = -a * (a * sxee + y0 * sxe - sxey)
         je, j1 = -a * sxee, -a * sxe
         jj = a * a * sxxee - (n * je * je - 2 * se * je * j1 + see * j1 * j1) / det
-        return a, y0, sse, -jr / jj / jnp.exp(log_k)
+        return a, y0, sse, jr * k, jj * k * k
 
     def step(state):
-        it, log_k, prev_log_k, prev_sse, max_step, _ = state
-        _, _, sse, d = solve(log_k)
-        worse = sse > prev_sse  # reject the last step and shrink the trust region
-        log_k = jnp.where(worse, (log_k + prev_log_k) / 2, log_k)
-        max_step = jnp.where(worse, max_step / 4, max_step)
-        d = jnp.where(worse, 0.0, jnp.clip(d, -max_step, max_step))
+        it, log_k, prev_log_k, prev_sse, prev_grad, max_step, _ = state
+        _, _, sse, grad, curvature = solve(log_k)
+        secant = (grad - prev_grad) / (log_k - prev_log_k)
+        curvature = jnp.where(jnp.isfinite(secant) & (secant > 0), secant, curvature)
+        d = -grad / curvature
+        # Reject the last step and shrink the trust region if the SSE grew by more
+        # than rounding (near the optimum, smaller changes are noise; comparing
+        # them would make the search wander until max_iters); grow it otherwise.
+        worse = sse > prev_sse + 1e-10 * jnp.abs(prev_sse)
+        max_step = jnp.where(worse, max_step / 4, jnp.minimum(2 * max_step, 1.0))
+        # Converged, or the trust region collapsed (steps would change k by less
+        # than 1e-6; happens only on ill-posed fits, where steps keep failing).
+        converged = (~worse & (jnp.abs(d) < tol)) | (max_step < 1e-6)
+        next_log_k = jnp.where(
+            worse,
+            (log_k + prev_log_k) / 2,
+            log_k + jnp.clip(d, -max_step, max_step),
+        )
         prev_log_k = jnp.where(worse, prev_log_k, log_k)
         prev_sse = jnp.where(worse, prev_sse, sse)
-        converged = ~worse & (jnp.abs(d) < tol)
-        return it + 1, log_k + d, prev_log_k, prev_sse, max_step, converged
+        prev_grad = jnp.where(worse, prev_grad, grad)
+        return it + 1, next_log_k, prev_log_k, prev_sse, prev_grad, max_step, converged
 
     def keep_going(state):
-        it, *_, converged = state
-        return (it < max_iters) & ~converged
+        it, log_k, *_, converged = state
+        # Ill-posed fits run off towards a straight line (k -> 0) or a step
+        # (k -> inf) without converging: stop once indistinguishable from those
+        # (under vmap, one such sweep would otherwise hold up the whole batch).
+        k = jnp.exp(log_k)
+        degenerate = (k * span < 1e-3) | (k * first > 50.0)
+        return (it < max_iters) & ~converged & ~degenerate
 
     log_k = jnp.log(jnp.asarray(k0, dtype=x.dtype))
-    init = (0, log_k, log_k, jnp.inf, jnp.asarray(1.0, x.dtype), ~jnp.any(mask))
+    zero, one = jnp.zeros((), x.dtype), jnp.ones((), x.dtype)
+    init = (0, log_k, log_k, jnp.inf, zero, one, ~jnp.any(mask))
     _, log_k, *_ = lax.while_loop(keep_going, step, init)
-    a, y0, _, _ = solve(log_k)
+    a, y0, *_ = solve(log_k)
     return jnp.stack([a, jnp.exp(log_k), y0 + y_ref])
 
 
@@ -235,6 +260,15 @@ def tau(sp: Spikes) -> Array:
     values differ by up to ~1e-3 (relative) from this fully converged fit (see
     ``allen_ephys/ALLEN_EPHYS_FIXES.md``, section 6).
     """
+    # Skip the fit for sweeps that are not hyperpolarizing (under vmap, both run).
+    return lax.cond(_is_hyperpolarizing(sp), _tau, _nan, sp)
+
+
+def _nan(sp: Spikes) -> Array:
+    return jnp.asarray(jnp.nan, dtype=sp.v.dtype)
+
+
+def _tau(sp: Spikes) -> Array:
     v_peak, peak_idx = voltage_deflection(sp, "min")
     base = v_baseline(sp)
     x = jnp.arange(sp.t.shape[0])
@@ -242,6 +276,8 @@ def tau(sp: Spikes) -> Array:
     crossed = (x >= start_idx) & (sp.v <= 0.1 * (v_peak - base) + base)
     fit_start = jnp.argmax(crossed)
     valid = (
+        # Also checked here: under vmap, lax.cond runs this for every sweep, and an
+        # empty fit window makes the fit return at once.
         _is_hyperpolarizing(sp)
         & jnp.isfinite(v_peak)
         & jnp.isfinite(base)
@@ -261,6 +297,10 @@ def tau(sp: Spikes) -> Array:
 def sag(sp: Spikes) -> Array:
     """Fraction by which a hyperpolarizing response relaxes from its minimum
     (averaged over 5 ms) back towards the steady state (last 100 ms)."""
+    return lax.cond(_is_hyperpolarizing(sp), _sag, _nan, sp)
+
+
+def _sag(sp: Spikes) -> Array:
     _, peak_idx = voltage_deflection(sp, "min")
     peak_t = take(sp.t, peak_idx)
     v_peak_avg = _average_voltage(
@@ -268,7 +308,7 @@ def sag(sp: Spikes) -> Array:
     )
     v_steady = _average_voltage(sp, sp.end - BASELINE_INTERVAL, sp.end)
     out = (v_peak_avg - v_steady) / (v_peak_avg - v_baseline(sp))
-    return jnp.where(_is_hyperpolarizing(sp) & jnp.isfinite(out), out, jnp.nan)
+    return jnp.where(jnp.isfinite(out), out, jnp.nan)
 
 
 def _require_current(sp: Spikes, name: str) -> None:
@@ -288,7 +328,8 @@ def short_step_amplitude(sp: Spikes) -> Array:
     """Short-square stimulus amplitude (pA): the maximum current after ``start``."""
     _require_current(sp, "short_step_amplitude")
     x = jnp.arange(sp.t.shape[0])
-    return jnp.max(jnp.where(x > find_time_index(sp.t, sp.start), sp.i, -jnp.inf))
+    after = (x > find_time_index(sp.t, sp.start)) & ~jnp.isnan(sp.i)
+    return jnp.max(jnp.where(after, sp.i, -jnp.inf))
 
 
 SPIKE_TRAIN_FEATURES = {
@@ -318,7 +359,6 @@ STIMULUS_AMPLITUDE = {
 }
 
 
-@partial(jax.jit, static_argnames=("stimulus",))
 def sweep_features(sp: Spikes, stimulus: str | None = None) -> dict[str, Array]:
     """All sweep-level features as scalars (NaN where undefined).
 
@@ -326,6 +366,11 @@ def sweep_features(sp: Spikes, stimulus: str | None = None) -> dict[str, Array]:
     selects how ``stim_amp`` is measured, as in Allen's cell extractor; it is NaN
     for ramps, ``None`` and sweeps without current.
     """
+    return _sweep_features(_analysed(sp), stimulus)
+
+
+@partial(jax.jit, static_argnames=("stimulus",))
+def _sweep_features(sp: Spikes, stimulus: str | None) -> dict[str, Array]:
     if stimulus is not None and stimulus not in STIMULUS_AMPLITUDE:
         raise ValueError(
             f"stimulus must be None or one of {list(STIMULUS_AMPLITUDE)}, got {stimulus!r}"

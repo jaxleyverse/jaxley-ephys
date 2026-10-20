@@ -101,14 +101,25 @@ jaxley_ephys agrees with this reference to floating-point precision.
   `scipy.optimize.curve_fit` with its default tolerances
   (`ftol = xtol = 1.49e-8`). Levenberg-Marquardt stops before the
   least-squares optimum: on the cached specimens Allen's tau is up to 1.1e-3
-  (relative; median 4e-7) away from a fully converged fit. jaxley_ephys fits
-  to the optimum, so sweep-level `tau` and the cell-level mean `tau` are
-  compared with `rtol = 2e-3` (`tests/utils/parity.py`).
+  (relative; median 4e-7) away from a fully converged fit; Gauss-Newton-type
+  steps converge only linearly when the exponential fits the response poorly.
+  jaxley_ephys fits to the optimum (Newton steps with secant curvature, 3-10
+  iterations on the cached sweeps), so sweep-level `tau` and the cell-level
+  mean `tau` are compared with `rtol = 2e-3` (`tests/utils/parity.py`).
 - **tau on ill-posed fits.** Without a clean exponential relaxation (e.g. the
   synthetic fuzz traces) the fit is ill-posed: Allen's local search may hit
   `maxfev` and return NaN, or end in a different local minimum than
   jaxley_ephys. The values (sometimes several seconds) are not meaningful
-  either way, so `tests/test_fuzz.py` does not compare `tau`.
+  either way, so `tests/test_fuzz.py` does not compare `tau`. jaxley_ephys
+  stops such fits once the exponential is indistinguishable from a straight
+  line or a step, or its trust region collapses.
+- **Samples after the analysis window.** `detect_spikes` analyses a sweep up to
+  `t_cutoff`, by default 20 ms after `end` (the reach of the peak search and of
+  the filter transients, which decay below 1e-20 within it); all features then
+  agree with an analysis of the whole sweep. An earlier `t_cutoff` (the user's
+  choice) can change spikes near `end`. The short-square `stim_amp`, the largest
+  current after `start` (`_short_step_stim_amp`), only covers samples up to
+  `t_cutoff`; it differs from Allen if the current is larger afterwards.
 - **dt == 0.** `calculate_dvdt` drops samples where `dt == 0`, which shifts
   every later dV/dt index by one relative to `v` (upstream does the same). On
   `tests/testdata/spike_test_var_dt.txt` this moves all threshold, upstroke,

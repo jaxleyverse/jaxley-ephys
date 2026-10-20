@@ -78,6 +78,36 @@ and can be `vmap`ped over cells.
 
 See `examples/` for a walkthrough on Allen Cell Types data.
 
+## Performance
+
+On CPU (one cached Allen cell, after compilation), jaxley_ephys analyses a whole
+cell about 2.5x faster than the vendored Allen code, ramps about 7x faster, long
+squares as fast and short squares at about 0.7x; batches of short (e.g.
+simulated) traces take about 3 ms per trace, 2.5x faster.
+
+- Everything is compiled on the first call for each trace length (about 2 s per
+  function set); later calls with the same length reuse it. JAX can keep
+  compiled code across sessions:
+
+  ```python
+  jax.config.update("jax_compilation_cache_dir", "/path/to/jax_cache")
+  jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+  ```
+
+- `detect_spikes(..., t_cutoff=...)` stops the analysis at `t_cutoff`; later
+  samples are NaN in the returned traces. The default, 20 ms after the end of the
+  analysis window, changes no result (nothing in Allen's algorithm reaches
+  further) and makes long sweeps with short stimuli fast. Samples are only
+  skipped when `t` is concrete; with a traced `t` (inside your own `jit`), an
+  explicit `t_cutoff` masks them (same results) and the default analyses the
+  whole sweep.
+- Sweeps of different lengths can be batched: pad them with NaN times.
+- On CPU, loop over recorded sweeps: `vmap` cannot skip work per sweep (e.g.
+  the 1 kHz dV/dt of sweeps without spikes) and is slower for long sweeps; for
+  short traces both take about the same time. Batching is meant for GPUs, which
+  are not tuned yet.
+- `uv run python benchmarks/run.py` measures this on your machine.
+
 ## Repository structure
 
 - `jaxley_ephys/`: the library

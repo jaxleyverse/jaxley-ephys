@@ -62,7 +62,7 @@ def _sosfilt(sos: Array, x: Array, zi: Array) -> Array:
             x_n = y_n
         return jnp.stack(new_state), x_n
 
-    return lax.scan(step, zi, x)[1]
+    return lax.scan(step, zi, x, unroll=4)[1]  # unrolling halves the loop overhead
 
 
 def _odd_extension(v: Array, lo: Array, hi: Array) -> Array:
@@ -100,7 +100,9 @@ def _is_evenly_sampled(dt: Array, step: Array, t: Array) -> Array:
     """All sampling intervals ``dt`` equal ``step``, up to Allen's tolerance
     (``np.allclose``) plus the rounding of ``t`` in its precision (in float32,
     times around 1 s are only resolved to about 1e-7 s)."""
-    rounding = 2 * jnp.finfo(t.dtype).eps * jnp.max(jnp.abs(t))
+    rounding = (
+        2 * jnp.finfo(t.dtype).eps * jnp.max(jnp.where(jnp.isnan(t), 0, jnp.abs(t)))
+    )
     return jnp.all(jnp.abs(dt - step) <= 1e-8 + 1e-5 * jnp.abs(step) + rounding)
 
 
@@ -125,6 +127,8 @@ def calculate_dvdt(
     In float64 this equals Allen's per-sample intervals to rounding; in float32
     the individual intervals are too coarse (several % off late in a sweep).
 
+    Samples with NaN time at the end of ``t`` are not part of the sweep (e.g.
+    padding, or samples after ``detect_spikes``' ``t_cutoff``); dV/dt is NaN there.
     With ``window=(lo, hi)`` only ``v[lo:hi + 1]`` is filtered, as Allen does for
     the analysis window during spike detection; values outside are meaningless.
     A cutoff at or above the Nyquist frequency gives NaN (Allen raises).
@@ -132,7 +136,8 @@ def calculate_dvdt(
     """
     v, t = jnp.asarray(v, dtype=float), jnp.asarray(t, dtype=float)
     dt = jnp.diff(t)
-    lo, hi = (0, t.shape[0] - 1) if window is None else window
+    n = jnp.searchsorted(t, jnp.inf)  # samples of the sweep (NaN times sort last)
+    lo, hi = (0, n - 1) if window is None else window
     step = (t[hi] - t[lo]) / jnp.maximum(hi - lo, 1)
     x = jnp.arange(dt.shape[0])
     inside = (x >= lo) & (x < hi)

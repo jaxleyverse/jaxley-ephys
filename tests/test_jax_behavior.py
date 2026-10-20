@@ -90,3 +90,10 @@ def test_empty_window_gives_nan_instead_of_raising(sweep):
     assert int(features["peak_deflect_index"]) == -1
     for name in ("peak_deflect", "sag", "tau"):
         assert np.isnan(features[name]), name
+
+
+def test_window_ending_before_start_gives_no_spikes(sweep):
+    """An empty analysis window is not an error (regression: the Nyquist check
+    indexed the empty window)."""
+    t, v, i = sweep
+    assert int(detect_spikes(t, v, i, END, START).n_spikes) == 0

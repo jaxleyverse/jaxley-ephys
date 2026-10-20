@@ -8,7 +8,7 @@ NaN (values). Batches of equal-length sweeps work with ``jax.vmap``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 
 import jax
@@ -31,7 +31,7 @@ from ._ops import (
     take,
     window_argmax,
 )
-from .dvdt import calculate_dvdt
+from .dvdt import _BESSEL4_POLES, _PADLEN, calculate_dvdt
 
 # Codes of the ``isi_type`` spike feature (Allen: "direct", "detour", NaN).
 ISI_MISSING, ISI_DIRECT, ISI_DETOUR = -1, 0, 1
@@ -45,8 +45,9 @@ class Spikes:
     """Detected spikes of one sweep, together with the sweep they come from.
 
     ``t``, ``v``, ``i`` (optional) and ``dvdt`` are the ``[T]`` traces (s, mV,
-    pA, V/s; ``dvdt`` is Bessel-filtered), ``start``/``end`` the analysis window
-    (s). The other fields are ``[K]`` buffers: sample indices of each spike's
+    pA, V/s; ``dvdt`` is Bessel-filtered), NaN after ``t_cutoff`` (not analysed),
+    ``start``/``end`` the analysis window (s). The other fields are ``[K]``
+    buffers: sample indices of each spike's
     threshold, peak, trough, upstroke, downstroke, fast trough, afterdepolarization
     and slow trough (-1 where missing), its ``isi_type`` code and whether it is
     ``clipped`` by the end of the window. ``overflow`` is set if there were more
@@ -84,8 +85,10 @@ class Spikes:
 
 
 def find_time_index(t: Array, t_0: Array) -> Array:
-    """First index with ``t >= t_0`` (Allen's ``find_time_index``, clamped to T - 1)."""
-    return jnp.minimum(jnp.searchsorted(t, t_0, side="left"), t.shape[0] - 1)
+    """First index with ``t >= t_0`` (Allen's ``find_time_index``), clamped to the
+    last sample of the sweep (trailing NaN times are not part of it)."""
+    last = jnp.searchsorted(t, jnp.inf) - 1  # NaN times sort last
+    return jnp.minimum(jnp.searchsorted(t, t_0, side="left"), last)
 
 
 def _next_or(idx: Array, default: Array) -> Array:
@@ -262,14 +265,24 @@ def _detect_spikes(
     min_height,
     min_peak,
     thresh_frac,
+    t_cutoff,
     max_spikes,
 ) -> Spikes:
     # Compute in the default float precision (float64 if ``jax_enable_x64`` is set).
     t, v = jnp.asarray(t, dtype=float), jnp.asarray(v, dtype=float)
     i = None if i is None else jnp.asarray(i, dtype=float)
+    # Samples after t_cutoff are not part of the sweep: like trailing NaN times
+    # (e.g. padding), they become NaN and do not affect any result.
+    outside = ~(t <= t_cutoff)
+    t, v = jnp.where(outside, jnp.nan, t), jnp.where(outside, jnp.nan, v)
+    i = None if i is None else jnp.where(outside, jnp.nan, i)
     size = t.shape[0]
     start = t[0] if start is None else jnp.asarray(start, dtype=t.dtype)
-    end = t[-1] if end is None else jnp.asarray(end, dtype=t.dtype)
+    end = (
+        t[jnp.searchsorted(t, jnp.inf) - 1]
+        if end is None
+        else jnp.asarray(end, t.dtype)
+    )
     start_idx, end_idx = find_time_index(t, start), find_time_index(t, end)
 
     # Allen detects putative spikes on dV/dt filtered over the analysis window only.
@@ -300,7 +313,13 @@ def _detect_spikes(
     )
     troughs = segment_argmin(v, trough_window, max_spikes)
     downs = segment_argmin(dvdt, segments(peaks, troughs, size), max_spikes)
-    dvdt_heavy = calculate_dvdt(v, t, 1.0)
+    # The 1 kHz dV/dt only matters after spikes (afterdepolarizations): skip it
+    # for sweeps without spikes (under vmap, both branches run).
+    dvdt_heavy = lax.cond(
+        jnp.any(thr >= 0),
+        lambda: calculate_dvdt(v, t, 1.0),
+        lambda: jnp.full_like(dvdt, jnp.nan),
+    )
     fast, adp, slow, isi_type, clipped = _trough_details(
         t, v, dvdt, dvdt_heavy, thr, peaks, clipped, end_idx
     )
@@ -325,27 +344,105 @@ def _detect_spikes(
     )
 
 
-def _check_cutoff(t, start, end, filter: float) -> None:
-    """Raise like Allen's ``calculate_dvdt`` if ``filter`` is not below the Nyquist
-    frequency of the trace or of the analysis window (if evenly sampled, with the
-    tolerance of ``calculate_dvdt``)."""
+# Samples after the analysis window only reach the results through the end
+# transient of the backward filter passes, which decays below this fraction.
+_TRANSIENT_DECAY = 1e-20
+# Analysed lengths are rounded up to a multiple of this, so that sweeps with
+# similar windows share one compiled shape.
+_LENGTH_STEP = 2**14
+
+
+def _host_time(t) -> tuple[np.ndarray, float]:
+    """The times of the sweep as a float64 NumPy array (without trailing NaN
+    times), and the rounding of their original precision."""
     t = np.asarray(t)
     eps = np.finfo(t.dtype).eps if np.issubdtype(t.dtype, np.floating) else 0.0
     t = t.astype(float)
+    t = t[: np.searchsorted(t, np.inf)]  # NaN times sort last
+    return t, 2 * eps * np.max(np.abs(t), initial=0.0)
+
+
+def _sampling_interval(t: np.ndarray, rounding: float) -> float | None:
+    """The sampling interval if ``t`` is evenly sampled (with the tolerance of
+    ``calculate_dvdt``), else None."""
+    if t.size < 2:
+        return None
+    step = (t[-1] - t[0]) / (t.size - 1)
+    tol = 1e-8 + 1e-5 * abs(step) + rounding
+    return step if np.all(np.abs(np.diff(t) - step) <= tol) else None
+
+
+def _check_cutoff(t: np.ndarray, rounding: float, start, end, filter: float) -> None:
+    """Raise like Allen's ``calculate_dvdt`` if ``filter`` is not below the Nyquist
+    frequency of the trace or of the analysis window (where evenly sampled)."""
     lo = 0 if start is None else min(np.searchsorted(t, start), t.size - 1)
     hi = t.size - 1 if end is None else min(np.searchsorted(t, end), t.size - 1)
-    for a, b in ((0, t.size - 1), (lo, hi)):
-        if b <= a:
+    for segment in (t, t[lo : hi + 1]):
+        if segment.size < 2:
             continue
-        step = (t[b] - t[a]) / (b - a)
+        step = (segment[-1] - segment[0]) / (segment.size - 1)
         if 0 <= filter * 1e3 * 2.0 * step < 1:  # cutoff / Nyquist frequency
             continue
-        tol = 1e-8 + 1e-5 * abs(step) + 2 * eps * np.max(np.abs(t))
-        if np.all(np.abs(np.diff(t[a : b + 1]) - step) <= tol):
+        if _sampling_interval(segment, rounding) is not None:
             raise ValueError(
                 f"filter={filter} kHz is not below the Nyquist frequency of the "
                 f"sampling rate ({0.5e-3 / step:.1f} kHz); lower it or pass filter=None"
             )
+
+
+def _default_cutoff(
+    t: np.ndarray, rounding: float, end, filter: float | None, max_interval: float
+) -> float | None:
+    """The earliest ``t_cutoff`` that cannot change any result for an analysis
+    window ending at ``end``: the reach of the peak search (``2 * max_interval``)
+    and of the end transients of the filters (the 1 kHz one is the slowest, unless
+    ``filter`` is lower) after ``end``. None if unknown (no ``end``, uneven sampling).
+    """
+    step = _sampling_interval(t, rounding)
+    cutoff = min(filter, 1.0) if filter else 1.0  # kHz
+    wn = cutoff * 1e3 * 2.0 * step if step else 1.0  # cutoff / Nyquist frequency
+    if end is None or not 0 < wn < 1:
+        return None
+    warped = 4.0 * np.tan(np.pi * wn / 2.0)  # as in bessel4_sos, slowest pole:
+    radius = max(abs((4.0 + p * warped) / (4.0 - p * warped)) for p in _BESSEL4_POLES)
+    transient = np.log(_TRANSIENT_DECAY) / np.log(radius) + _PADLEN + 2  # samples
+    return float(end) + 2 * max_interval + transient * step
+
+
+def _analysed_length(t: np.ndarray, t_cutoff: float) -> int:
+    """Number of leading samples to analyse: those up to ``t_cutoff``, rounded up
+    (the extra ones are masked) so that similar cutoffs share a compiled shape."""
+    n = max(int(np.searchsorted(t, t_cutoff, side="right")), 1)
+    return int(min(t.size, np.ceil(n / _LENGTH_STEP) * _LENGTH_STEP))
+
+
+def _analysed(sp: Spikes) -> Spikes:
+    """``sp`` with concrete traces cut to the analysed samples (before the NaN
+    tail, rounded up like in ``detect_spikes``): features do not depend on the
+    tail, so they need not process it."""
+    if isinstance(sp.t, jax.core.Tracer) or jnp.ndim(sp.t) != 1:
+        return sp
+    size = sp.t.shape[0]
+    n = max(int(np.searchsorted(np.asarray(sp.t), np.inf)), 1)  # NaN times sort last
+    n = int(min(size, np.ceil(n / _LENGTH_STEP) * _LENGTH_STEP))
+    if n == size:
+        return sp
+
+    def cut(x):
+        return None if x is None else x[:n]
+
+    return replace(sp, t=cut(sp.t), v=cut(sp.v), i=cut(sp.i), dvdt=cut(sp.dvdt))
+
+
+def _pad(sp: Spikes, size: int) -> Spikes:
+    """``sp`` with its traces padded with NaN to ``size`` samples."""
+
+    def pad(x):
+        if x is None:
+            return None
+        return jnp.concatenate([x, jnp.full(size - x.shape[0], jnp.nan, x.dtype)])
+
+    return replace(sp, t=pad(sp.t), v=pad(sp.v), i=pad(sp.i), dvdt=pad(sp.dvdt))
 
 
 def detect_spikes(
@@ -361,6 +458,7 @@ def detect_spikes(
     min_height: float | Array = 2.0,
     min_peak: float | Array = -30.0,
     thresh_frac: float | Array = 0.05,
+    t_cutoff: float | Array | None = None,
     max_spikes: int | None = 256,
 ) -> Spikes:
     """Detect spikes like Allen's ``EphysSweepFeatureExtractor.process_spikes``.
@@ -378,6 +476,13 @@ def detect_spikes(
         min_height: Minimum threshold-to-peak height (mV).
         min_peak: Minimum peak voltage (mV).
         thresh_frac: Fraction of the mean upstroke that defines the threshold.
+        t_cutoff: Time (s) after which samples are not analysed, as if the
+            recording ended there; they are NaN in ``Spikes``. Default: 20 ms
+            after ``end``, the reach of the peak search and of the filters'
+            transients, so that no result changes (results match Allen for any
+            later cutoff). ``float("inf")`` analyses the whole sweep, as does the
+            default if ``t`` is traced. Trailing NaN times (e.g. padding to batch
+            sweeps of unequal length) are treated the same way.
         max_spikes: Static capacity K of the per-spike buffers. It must hold every
             upward crossing of ``dv_cutoff`` in the window (the putative spikes,
             before they are merged and filtered). ``None`` starts at 256 and grows
@@ -387,6 +492,10 @@ def detect_spikes(
         ``Spikes`` with ``[K]`` buffers. If K is too small, a ``ValueError`` is
         raised outside of ``jit``/``vmap``; inside, ``Spikes.overflow`` is set and
         the results are incomplete.
+
+    Samples after ``t_cutoff`` are skipped if ``t`` and ``t_cutoff`` are concrete
+    (not traced), which makes long sweeps with short windows fast; otherwise they
+    are masked.
 
     The parameters and their defaults are those of Allen's extractor. Compiled
     once per input shape, dtype, ``filter`` and ``max_spikes``; other arguments
@@ -401,8 +510,19 @@ def detect_spikes(
             f"t, v and i must be 1D arrays of equal length (use jax.vmap for batches), "
             f"got shapes {shapes}"
         )
-    if filter and not any(isinstance(x, jax.core.Tracer) for x in (t, start, end)):
-        _check_cutoff(t, start, end, filter)
+    size = n = shapes[0][0]
+    if not any(isinstance(x, jax.core.Tracer) for x in (t, start, end)):
+        t_host, rounding = _host_time(t)
+        if filter:
+            _check_cutoff(t_host, rounding, start, end, filter)
+        if t_cutoff is None and not isinstance(max_interval, jax.core.Tracer):
+            t_cutoff = _default_cutoff(
+                t_host, rounding, end, filter, float(max_interval)
+            )
+        if t_cutoff is not None and not isinstance(t_cutoff, jax.core.Tracer):
+            # Skip the samples after the cutoff (and pad the results back).
+            n = _analysed_length(t_host, float(t_cutoff))
+            t, v, i = t[:n], v[:n], None if i is None else i[:n]
     t, v = jnp.asarray(t), jnp.asarray(v)
     i = None if i is None else jnp.asarray(i)
     detect = partial(
@@ -418,6 +538,7 @@ def detect_spikes(
         min_height=min_height,
         min_peak=min_peak,
         thresh_frac=thresh_frac,
+        t_cutoff=jnp.inf if t_cutoff is None else t_cutoff,
     )
     if max_spikes is not None:
         sp = detect(max_spikes=max_spikes)
@@ -426,17 +547,19 @@ def detect_spikes(
                 f"more than max_spikes={max_spikes} putative spikes; "
                 "increase max_spikes or use max_spikes=None"
             )
-        return sp
-    capacity = AUTO_MAX_SPIKES
-    while True:
-        sp = detect(max_spikes=capacity)
-        if isinstance(sp.overflow, jax.core.Tracer):
-            raise ValueError(
-                "max_spikes=None needs concrete inputs; pass an int inside jit, vmap or grad"
-            )
-        if not sp.overflow:
-            return sp
-        capacity *= 4
+    else:
+        capacity = AUTO_MAX_SPIKES
+        while True:
+            sp = detect(max_spikes=capacity)
+            if isinstance(sp.overflow, jax.core.Tracer):
+                raise ValueError(
+                    "max_spikes=None needs concrete inputs; "
+                    "pass an int inside jit, vmap or grad"
+                )
+            if not sp.overflow:
+                break
+            capacity *= 4
+    return _pad(sp, size) if n < size else sp
 
 
 def _widths(sp: Spikes) -> Array:
@@ -467,7 +590,6 @@ def _point_features(sp: Spikes, name: str, idx: Array) -> dict[str, Array]:
     return out
 
 
-@jax.jit
 def spike_features(sp: Spikes) -> dict[str, Array]:
     """The columns of Allen's spike table, as ``[K]`` arrays.
 
@@ -477,6 +599,11 @@ def spike_features(sp: Spikes) -> dict[str, Array]:
     (s); undefined values are NaN. ``clipped`` is boolean, ``isi_type`` uses
     ``ISI_DIRECT``, ``ISI_DETOUR`` and ``ISI_MISSING``.
     """
+    return _spike_features(_analysed(sp))
+
+
+@jax.jit
+def _spike_features(sp: Spikes) -> dict[str, Array]:
     out = {"threshold_index": sp.threshold, "clipped": sp.clipped}
     for name, idx in (
         ("threshold", sp.threshold),
