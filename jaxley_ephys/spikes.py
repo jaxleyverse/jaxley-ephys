@@ -327,20 +327,24 @@ def _detect_spikes(
 
 def _check_cutoff(t, start, end, filter: float) -> None:
     """Raise like Allen's ``calculate_dvdt`` if ``filter`` is not below the Nyquist
-    frequency of the trace or of the analysis window (where dt is fixed)."""
-    t = np.asarray(t, dtype=float)
+    frequency of the trace or of the analysis window (if evenly sampled, with the
+    tolerance of ``calculate_dvdt``)."""
+    t = np.asarray(t)
+    eps = np.finfo(t.dtype).eps if np.issubdtype(t.dtype, np.floating) else 0.0
+    t = t.astype(float)
     lo = 0 if start is None else min(np.searchsorted(t, start), t.size - 1)
     hi = t.size - 1 if end is None else min(np.searchsorted(t, end), t.size - 1)
     for a, b in ((0, t.size - 1), (lo, hi)):
         if b <= a:
             continue
-        dt = t[a + 1] - t[a]
-        if 0 <= filter * 1e3 * 2.0 * dt < 1:  # cutoff / Nyquist frequency
+        step = (t[b] - t[a]) / (b - a)
+        if 0 <= filter * 1e3 * 2.0 * step < 1:  # cutoff / Nyquist frequency
             continue
-        if np.allclose(np.diff(t[a : b + 1]), dt):
+        tol = 1e-8 + 1e-5 * abs(step) + 2 * eps * np.max(np.abs(t))
+        if np.all(np.abs(np.diff(t[a : b + 1]) - step) <= tol):
             raise ValueError(
                 f"filter={filter} kHz is not below the Nyquist frequency of the "
-                f"sampling rate ({0.5e-3 / dt:.1f} kHz); lower it or pass filter=None"
+                f"sampling rate ({0.5e-3 / step:.1f} kHz); lower it or pass filter=None"
             )
 
 
@@ -386,8 +390,10 @@ def detect_spikes(
 
     The parameters and their defaults are those of Allen's extractor. Compiled
     once per input shape, dtype, ``filter`` and ``max_spikes``; other arguments
-    can change without recompiling. float64 (``jax_enable_x64``) is needed to
-    match Allen exactly, especially for long recordings.
+    can change without recompiling. With float64 (``jax_enable_x64``) the results
+    match Allen exactly; in float32 they deviate slightly (a few spike features
+    move by a sample, rarely more; sweep features by about 2e-4, ``tau`` and
+    ``sag`` up to 1.5e-3).
     """
     shapes = [jnp.shape(x) for x in (t, v, i) if x is not None]
     if len(shapes[0]) != 1 or any(shape != shapes[0] for shape in shapes):

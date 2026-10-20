@@ -83,6 +83,12 @@ Changes relative to original AllenSDK implementation.
   - stimulus amplitude: long squares use `_step_stim_amp`, short squares use
     `_short_step_stim_amp` (set on all short squares, not only the
     common-amplitude ones), ramps have no calculator (`stim_amp = nan`)
+  - cell level: the `EphysCellFeatureExtractor` outputs, the hero sweep, the
+    long-square baseline (`extract_cell_features` overrides the extractor's
+    `nanmean` with a plain mean over all long squares) and first-spike means of
+    `extract_cell_features`, the adjusted short-square detection parameters, and
+    these values under their Allen DB names (`record`, without the DB-matching
+    heuristics of section 4)
 - Only canonical stimuli are used: `Long Square`, `Ramp`, `Short Square`
   (`tests/utils/allen_dataset.py` skips variants such as `Ramp to Rheobase`
   and `Short Square - Triple` when reading `ephys_sweeps.json`).
@@ -119,9 +125,26 @@ jaxley_ephys agrees with this reference to floating-point precision.
   windows, `argmax` of empty slices, a filter cutoff at or above the Nyquist
   frequency): jaxley_ephys cannot raise under `jit` and returns NaN or -1
   instead (NaN dV/dt for the cutoff, so no spikes are detected).
+- **Cell level where Allen raises.** Allen aborts the whole cell when there
+  are no spiking or no subthreshold long squares, no hero sweep, fewer than two
+  spiking sweeps for the f-I fit or no sweeps of a stimulus type. jaxley_ephys
+  returns NaN (indices -1) for the affected features only and computes the
+  rest.
+- **Degenerate line fits.** If all sweeps of the f-I or input-resistance fit
+  have the same current, `np.linalg.lstsq` returns a minimum-norm solution;
+  jaxley_ephys returns NaN.
 - **Float precision.** Run directly on the float32 NWB data, Allen computes
   some means (`v_baseline`, `sag`) in float32, about 1e-5 mV away from the
   float64 result; the reference therefore uses float64 inputs (section 5).
+  jaxley_ephys matches it exactly in float64 (`jax_enable_x64`). In float32 it
+  takes the sampling interval of evenly sampled traces from the whole time axis
+  (individual float32 intervals are several % off late in a sweep) and fits
+  `tau` around the mean voltage. The remaining deviations come from the float32
+  time resolution (about 1e-7 s at 1 s). On the 8 cached specimens spike counts
+  are identical; of about 14,000 spike indices a few move by one sample and 2
+  by more (a trough at the window end, which float32 rounds onto a sample, and
+  a fast trough in a flat stretch of dV/dt). Features agree to about 2e-4, `tau`
+  and `sag` (a ratio with a small numerator) to 1.5e-3 (`tests/test_float32.py`).
 - **Filter numerics.** jaxley_ephys filters with second-order sections, Allen
   with `filtfilt(b, a)`; dV/dt agrees to about 1e-10 V/s, well within the
   1e-9 relative tolerance of the parity tests.

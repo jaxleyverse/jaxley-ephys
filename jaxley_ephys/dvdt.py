@@ -96,9 +96,12 @@ def _filtfilt(sos: Array, v: Array, lo: Array, hi: Array) -> Array:
     return bwd[jnp.clip(pos, 0, ext.shape[0] - 1)]
 
 
-def _has_fixed_dt(dt: Array) -> Array:
-    """All sampling intervals equal (``np.allclose(dt, dt[0])``, as in Allen)."""
-    return jnp.all(jnp.abs(dt - dt[0]) <= 1e-8 + 1e-5 * jnp.abs(dt[0]))
+def _is_evenly_sampled(dt: Array, step: Array, t: Array) -> Array:
+    """All sampling intervals ``dt`` equal ``step``, up to Allen's tolerance
+    (``np.allclose``) plus the rounding of ``t`` in its precision (in float32,
+    times around 1 s are only resolved to about 1e-7 s)."""
+    rounding = 2 * jnp.finfo(t.dtype).eps * jnp.max(jnp.abs(t))
+    return jnp.all(jnp.abs(dt - step) <= 1e-8 + 1e-5 * jnp.abs(step) + rounding)
 
 
 @partial(jax.jit, static_argnames=("filter",))
@@ -117,6 +120,11 @@ def calculate_dvdt(
     Where ``dt == 0`` the result is NaN; Allen drops these samples instead, which
     shifts all later indices (see ``allen_ephys/ALLEN_EPHYS_FIXES.md``, section 6).
 
+    For evenly sampled traces the sampling interval is taken from the whole time
+    axis, ``(t[hi] - t[lo]) / (hi - lo)``, for the filter and the differences.
+    In float64 this equals Allen's per-sample intervals to rounding; in float32
+    the individual intervals are too coarse (several % off late in a sweep).
+
     With ``window=(lo, hi)`` only ``v[lo:hi + 1]`` is filtered, as Allen does for
     the analysis window during spike detection; values outside are meaningless.
     A cutoff at or above the Nyquist frequency gives NaN (Allen raises).
@@ -124,13 +132,16 @@ def calculate_dvdt(
     """
     v, t = jnp.asarray(v, dtype=float), jnp.asarray(t, dtype=float)
     dt = jnp.diff(t)
+    lo, hi = (0, t.shape[0] - 1) if window is None else window
+    step = (t[hi] - t[lo]) / jnp.maximum(hi - lo, 1)
+    x = jnp.arange(dt.shape[0])
+    inside = (x >= lo) & (x < hi)
+    evenly_sampled = _is_evenly_sampled(jnp.where(inside, dt, step), step, t)
     if filter:
-        lo, hi = (0, t.shape[0] - 1) if window is None else window
-        wn = filter * 1e3 / (0.5 / (t[lo + 1] - t[lo]))  # cutoff / Nyquist frequency
-        x = jnp.arange(dt.shape[0])
-        fixed_dt = _has_fixed_dt(jnp.where((x >= lo) & (x < hi), dt, dt[lo]))
+        wn = filter * 1e3 / (0.5 / step)  # cutoff / Nyquist frequency
         filtered = _filtfilt(bessel4_sos(wn), v, lo, hi)
         filtered = jnp.where((wn >= 0) & (wn < 1), filtered, jnp.nan)
-        v = jnp.where(fixed_dt, filtered, v)
+        v = jnp.where(evenly_sampled, filtered, v)
+    dt = jnp.where(evenly_sampled & inside, step, dt)
     dvdt = jnp.where(dt != 0, 1e-3 * jnp.diff(v) / jnp.where(dt != 0, dt, 1.0), jnp.nan)
     return jnp.concatenate([dvdt, jnp.full((1,), jnp.nan, dtype=dvdt.dtype)])

@@ -12,6 +12,13 @@ from .spikes import (
     spike_features,
 )
 from .sweep import sweep_features
+from .sweepset import (
+    long_square_features,
+    ramp_features,
+    short_square_detection_params,
+    short_square_features,
+)
+from .cell import cell_features, extract_cell_features
 
 __all__ = [
     "ISI_DETOUR",
@@ -19,8 +26,14 @@ __all__ = [
     "ISI_MISSING",
     "Spikes",
     "calculate_dvdt",
+    "cell_features",
     "detect_spikes",
+    "extract_cell_features",
     "find_time_index",
+    "long_square_features",
+    "ramp_features",
+    "short_square_detection_params",
+    "short_square_features",
     "spike_features",
     "sweep_features",
 ]

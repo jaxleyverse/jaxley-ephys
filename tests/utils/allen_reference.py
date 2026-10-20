@@ -6,8 +6,9 @@ Allen is slow, so its outputs are computed once per cached specimen
 sweep the reference holds the analysis window and detection parameters that
 Allen's ``cell_extractor_for_nwb`` uses, the full spike table and all sweep
 features. Per cell it holds the ``EphysCellFeatureExtractor`` outputs, the hero
-sweep and first-spike means of ``extract_cell_features``, and Allen's adjusted
-short-square detection parameters.
+sweep, baseline and first-spike means of ``extract_cell_features``, Allen's
+adjusted short-square detection parameters, and these cell features under their
+Allen DB names (``record``).
 
 Allen runs on float64 copies of the NWB traces (NWB data is float32), which is
 exactly what the JAX side receives, see ``allen_sweeps``. Known, intended
@@ -29,7 +30,7 @@ from tests.utils.allen_dataset import load_specimen_case
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REFERENCE_DIR = REPO_ROOT / "tests" / "testdata" / "allen_reference"
 # Bump when the contents of the reference files change.
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 KINDS = ("long_square", "short_square", "ramp")
 SWEEP_FEATURES = (
     "adapt",
@@ -45,6 +46,24 @@ SWEEP_FEATURES = (
     "peak_deflect",
     "peak_deflect_index",
     "stim_amp",
+)
+
+
+# First-spike features in the Allen DB, with suffixes _long_square, _short_square
+# and _ramp.
+DB_SPIKE_FEATURES = (
+    "fast_trough_t",
+    "fast_trough_v",
+    "slow_trough_t",
+    "slow_trough_v",
+    "threshold_t",
+    "threshold_v",
+    "threshold_i",
+    "peak_t",
+    "peak_v",
+    "trough_t",
+    "trough_v",
+    "upstroke_downstroke_ratio",
 )
 
 
@@ -150,7 +169,10 @@ def _cell_record(cell, sweeps) -> dict:
         "tau",
     )
     long_record = {key: _float(long_sq[key]) for key in keys}
-    long_record["v_baseline"] = _float(long_sq["v_baseline"])
+    # extract_cell_features overrides the extractor's baseline with this mean.
+    long_record["v_baseline"] = float(
+        np.mean([sweep.sweep_feature("v_baseline") for sweep in sweeps["long_square"]])
+    )
     long_record["rheobase_index"] = int(long_sq["rheobase_extractor_index"])
     long_record["hero_index"] = _hero_index(
         sweeps["long_square"], long_sq["rheobase_i"]
@@ -165,20 +187,55 @@ def _cell_record(cell, sweeps) -> dict:
     )
     common = short_sq["common_amp_sweeps"]
     ramps = features["ramps"]["spiking_sweeps"]
+    short_record = {
+        "stimulus_amplitude": _float(short_sq["stimulus_amplitude"]),
+        "common_amp_sweeps": [int(sweep.id) for sweep in common],
+        "mean_spike_0": _mean_spike_0(common),
+        "dv_cutoff": float(cutoff),
+        "thresh_frac": max(float(thresh_frac), 0.1),
+    }
+    ramp_record = {
+        "spiking_sweeps": [int(sweep.id) for sweep in ramps],
+        "mean_spike_0": _mean_spike_0(ramps),
+    }
+    hero_index = long_record["hero_index"]
+    hero = sweeps["long_square"][hero_index] if hero_index >= 0 else None
     return {
         "long_square": long_record,
-        "short_square": {
-            "stimulus_amplitude": _float(short_sq["stimulus_amplitude"]),
-            "common_amp_sweeps": [int(sweep.id) for sweep in common],
-            "mean_spike_0": _mean_spike_0(common),
-            "dv_cutoff": float(cutoff),
-            "thresh_frac": max(float(thresh_frac), 0.1),
-        },
-        "ramp": {
-            "spiking_sweeps": [int(sweep.id) for sweep in ramps],
-            "mean_spike_0": _mean_spike_0(ramps),
-        },
+        "short_square": short_record,
+        "ramp": ramp_record,
+        "record": _db_record(
+            long_record, long_sq["rheobase_sweep"], hero, short_record, ramp_record
+        ),
     }
+
+
+def _db_record(long_record, rheobase, hero, short_record, ramp_record) -> dict:
+    """Cell features under their Allen Cell Types Database names: hero-sweep
+    features, long-square features, the rheobase sweep's first spike and the
+    first-spike means of short squares and ramps (no DB-matching heuristics)."""
+
+    def hero_feature(name):
+        return float("nan") if hero is None else _float(hero.sweep_feature(name))
+
+    record = {
+        "adaptation": hero_feature("adapt"),
+        "avg_isi": hero_feature("mean_isi"),
+        "latency": hero_feature("latency"),
+        "f_i_curve_slope": long_record["fi_fit_slope"],
+        "ri": long_record["input_resistance"],
+        "sag": long_record["sag"],
+        "tau": long_record["tau"],
+        "vm_for_sag": long_record["vm_for_sag"],
+        "vrest": long_record["v_baseline"],
+    }
+    first_spike = rheobase.spikes()[0]
+    for name in DB_SPIKE_FEATURES:
+        record[f"{name}_long_square"] = _float(first_spike[name])
+        record[f"{name}_short_square"] = short_record["mean_spike_0"][name]
+        record[f"{name}_ramp"] = ramp_record["mean_spike_0"][name]
+    record["threshold_i_long_square"] = long_record["rheobase_i"]
+    return record
 
 
 def build_reference(specimen_id: int) -> dict:

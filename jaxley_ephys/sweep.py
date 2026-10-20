@@ -143,6 +143,20 @@ def peak_deflect_index(sp: Spikes) -> Array:
     return voltage_deflection(sp)[1]
 
 
+@jax.jit
+def min_deflect(sp: Spikes) -> Array:
+    """Minimum voltage in ``[start, end)`` (mV)."""
+    return voltage_deflection(sp, "min")[0]
+
+
+@jax.jit
+def min_deflect_i(sp: Spikes) -> Array:
+    """Injected current at the minimum voltage (pA); NaN without current."""
+    if sp.i is None:
+        return jnp.asarray(jnp.nan, dtype=sp.v.dtype)
+    return take(sp.i, voltage_deflection(sp, "min")[1])
+
+
 def _is_hyperpolarizing(sp: Spikes) -> Array:
     """Negative current halfway through ``[start, end]``."""
     if sp.i is None:
@@ -167,7 +181,10 @@ def _fit_exp(
     """
     w = mask.astype(x.dtype)
     x = jnp.where(mask, x, 0.0)
-    y = jnp.where(mask, y, 0.0)
+    # Fit around the mean voltage: in float32, the sums of squares of voltages
+    # around -70 mV would otherwise lose most of their precision.
+    y_ref = jnp.sum(jnp.where(mask, y, 0.0)) / jnp.maximum(jnp.sum(w), 1.0)
+    y = jnp.where(mask, y - y_ref, 0.0)
     n, sy, syy = jnp.sum(w), jnp.sum(w * y), jnp.sum(w * y * y)
 
     def solve(log_k):
@@ -204,7 +221,7 @@ def _fit_exp(
     init = (0, log_k, log_k, jnp.inf, jnp.asarray(1.0, x.dtype), ~jnp.any(mask))
     _, log_k, *_ = lax.while_loop(keep_going, step, init)
     a, y0, _, _ = solve(log_k)
-    return jnp.stack([a, jnp.exp(log_k), y0])
+    return jnp.stack([a, jnp.exp(log_k), y0 + y_ref])
 
 
 @jax.jit
@@ -289,6 +306,9 @@ SUBTHRESHOLD_FEATURES = {
     "sag": sag,
     "peak_deflect": peak_deflect,
     "peak_deflect_index": peak_deflect_index,
+    # Not sweep features in Allen; its cell-level input resistance needs them.
+    "min_deflect": min_deflect,
+    "min_deflect_i": min_deflect_i,
 }
 # How Allen's cell extractor measures ``stim_amp`` for each stimulus type.
 STIMULUS_AMPLITUDE = {

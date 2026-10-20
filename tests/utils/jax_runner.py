@@ -3,8 +3,8 @@
 ``extract`` runs spike detection plus all spike and sweep features on one sweep
 as a pure JAX function (used for the jit/vmap/grad tests); ``analyse_sweep``
 runs the public API eagerly for the parity tests and returns NumPy outputs
-keyed like Allen's spike table and sweep features. Only this module changes
-when the library API does.
+keyed like Allen's spike table and sweep features; ``analyse_cell`` runs the
+cell pipeline. Only this module changes when the library API does.
 """
 
 from __future__ import annotations
@@ -14,7 +14,12 @@ from functools import partial
 import jax
 import numpy as np
 
-from jaxley_ephys import detect_spikes, spike_features, sweep_features
+from jaxley_ephys import (
+    detect_spikes,
+    extract_cell_features,
+    spike_features,
+    sweep_features,
+)
 
 
 def extract(
@@ -81,6 +86,12 @@ def analyse_sweep(
         "features": {name: float(value) for name, value in features.items()},
         "error": None,
     }
+
+
+def analyse_cell(long_squares, short_squares, ramps) -> dict:
+    """``extract_cell_features`` on lists of ``(t, v, i, start, end)``, as NumPy."""
+    out = extract_cell_features(long_squares, short_squares, ramps)
+    return jax.tree.map(np.asarray, out)
 
 
 @partial(jax.jit, static_argnames=("stimulus", "max_spikes"))

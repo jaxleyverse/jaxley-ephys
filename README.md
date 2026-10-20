@@ -29,7 +29,7 @@ uv sync  # includes the dev dependency group
 ```python
 import jax
 
-jax.config.update("jax_enable_x64", True)  # float64, needed to match Allen exactly
+jax.config.update("jax_enable_x64", True)  # float64 matches Allen exactly (float32: ~1e-4)
 
 from jaxley_ephys import detect_spikes, spike_features, sweep_features
 
@@ -59,6 +59,23 @@ def analyse(t, v, i):
 overflow, features = jax.vmap(analyse)(t, v, i)  # t, v, i of shape [S, T]
 ```
 
+Cell-level features follow Allen's `extract_cell_features`: spike features ->
+sweep features -> sweepset features per stimulus type -> cell features, named as
+in the Allen Cell Types Database (`ri`, `tau`, `vrest`, `f_i_curve_slope`,
+`threshold_v_long_square`, ...):
+
+```python
+from jaxley_ephys import extract_cell_features
+
+# Lists of (t, v, i, start, end) per stimulus type; sweep lengths may differ.
+cell = extract_cell_features(long_squares, short_squares, ramps)
+cell["cell"]["ri"], cell["long_squares"]["rheobase_i"]
+```
+
+The sweepset functions (`long_square_features`, `short_square_features`,
+`ramp_features`) only take the stacked per-sweep features, so they are cheap
+and can be `vmap`ped over cells.
+
 See `examples/` for a walkthrough on Allen Cell Types data.
 
 ## Repository structure
@@ -68,8 +85,11 @@ See `examples/` for a walkthrough on Allen Cell Types data.
   - `spikes.py`: spike detection (`detect_spikes`, `Spikes`) and spike features
     (`spike_features`)
   - `sweep.py`: sweep features (`sweep_features` and the individual features)
+  - `sweepset.py`: sweepset features for long squares, short squares and ramps,
+    and the adjusted short-square detection parameters
+  - `cell.py`: cell features (`cell_features`) and the whole pipeline for a cell
+    (`extract_cell_features`)
   - `_ops.py`: array primitives shared by the above
-  - `features/`: sweepset features for long squares, short squares and ramps
 - `allen_ephys/`: maintained copy of the (unmaintained) AllenSDK feature
   extraction with fixes for current dependencies and edge cases; the parity
   reference (see `allen_ephys/ALLEN_EPHYS_FIXES.md`)

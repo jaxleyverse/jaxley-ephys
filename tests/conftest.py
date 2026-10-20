@@ -5,7 +5,7 @@ import pytest
 
 from tests.utils.allen_dataset import cached_specimen_ids, load_specimen_case
 from tests.utils.allen_reference import KINDS, allen_sweeps, load_reference
-from tests.utils.jax_runner import analyse_sweep
+from tests.utils.jax_runner import analyse_cell, analyse_sweep
 
 # Allen parity compares sample indices exactly; float64 avoids float32 rounding
 # of long time axes shifting threshold crossings by one or more samples.
@@ -75,9 +75,16 @@ def reference(specimen_id) -> dict:
 
 
 @pytest.fixture(scope="session")
-def results(specimen_id, reference) -> dict[str, list[dict]]:
+def sweeps(specimen_id) -> dict[str, list]:
+    """The specimen's sweeps as Allen sets them up (``allen_sweeps``), by kind."""
+    if specimen_id is None:
+        pytest.fail(MISSING_CACHE)
+    return allen_sweeps(specimen_id)[1]
+
+
+@pytest.fixture(scope="session")
+def results(specimen_id, reference, sweeps) -> dict[str, list[dict]]:
     """JAX outputs for every sweep, on the same traces and parameters Allen used."""
-    _, sweeps = allen_sweeps(specimen_id)
     out = {}
     for kind in KINDS:
         numbers = [record["sweep_number"] for record in reference["sweeps"][kind]]
@@ -100,3 +107,15 @@ def results(specimen_id, reference) -> dict[str, list[dict]]:
             for s in sweeps[kind]
         ]
     return out
+
+
+@pytest.fixture(scope="session")
+def cell_results(sweeps) -> dict:
+    """JAX cell pipeline on the specimen's sweeps, with Allen's analysis windows."""
+    as_tuples = {
+        kind: [(s.t, s.v, s.i, s.start, s.end) for s in kind_sweeps]
+        for kind, kind_sweeps in sweeps.items()
+    }
+    return analyse_cell(
+        as_tuples["long_square"], as_tuples["short_square"], as_tuples["ramp"]
+    )
