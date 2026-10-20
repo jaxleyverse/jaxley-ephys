@@ -14,16 +14,25 @@ This file is the canonical execution plan for `jaxley-ephys`.
 - `[x]` completed
 - `[!]` blocked (waiting on user decision or external issue)
 
+## Status overview (2026-10-20)
+- Done: Subgoals 1-8 and 14-18 (the 2026-10-19 review plan: parity harness, core
+  rewrite, cell level, CPU performance, float32 support).
+- In progress: Subgoal 10 (publication on GitHub, review step 5).
+- Later, not scheduled: Subgoals 9 (differentiable variants), 12 (diagnostics
+  toolkit) and 13 (burst and advanced features).
+- Dropped: Subgoal 11 (benchmark CI gates and an optimization-loop protocol);
+  benchmarks stay local and minimal (Subgoal 18).
+
 ## Subgoal 1 - Reproducible Allen testcase loader and cache
 Goal: Create reproducible cached testcases from Allen with mixed mouse/human cells.
 
 - [x] Create `tests/load_testdata.py`
 - [x] Hardcode a mixed panel of Allen cell IDs at top of loader script
-- [x] Download and store per-cell sweep data as:
-  - `tests/testdata/cell_{cell_id}_data.npz`
-  - `tests/testdata/cell_{cell_id}_meta.json`
+- [x] Download and store per-cell data as the AllenSDK cache (NWB file and sweep
+  metadata per specimen) under `tests/testdata/allen_cache/` (this replaced the
+  earlier `cell_{cell_id}_data.npz` / `_meta.json` exports)
 - [x] Include long-square, ramp, and short-square sweep metadata required for testing
-- [x] Include website/database-provided feature values in meta JSON (for later comparison)
+- [x] Include website/database-provided feature values (`ephys_features.csv`) for later comparison
 - [x] Add clear CLI usage/help text to loader script
 - [x] Keep processed testcase artifacts under `tests/testdata/` and raw AllenSDK cache under `tests/testdata/allen_cache/`
 - [x] Smoke-run loader for at least one cell and verify files are written
@@ -77,7 +86,8 @@ Exit criteria:
 - Every feature required for JAX reimplementation has a stable Allen reference path.
 
 ## Subgoal 5 - Implement JAX feature primitives and sweep-level features
-> 2026-10-19 review: parity gaps remain on the full cached panel; continued in Subgoals 15-17.
+> Superseded by Subgoals 15-17 (2026-10-19/20): this API was replaced by
+> `detect_spikes`, `spike_features` and `sweep_features`, with parity on all cached specimens.
 
 Goal: Build clean, functional JAX-first sweep feature functions with parity checks.
 
@@ -97,7 +107,8 @@ Exit criteria:
 - Sweep-level JAX features for all three stimulus types pass parity tests.
 
 ## Subgoal 6 - Implement JAX sweepset-level features and parity tests
-> 2026-10-19 review: parity gaps remain on the full cached panel; continued in Subgoals 15-17.
+> Superseded by Subgoal 17 (2026-10-20): sweepset features follow Allen's conventions,
+> with parity on all cached specimens.
 
 Goal: Compute sweepset features from sweep-level feature vectors with strict Allen parity.
 
@@ -134,15 +145,15 @@ Goal: Improve performance/clarity while preserving behavior.
   All 33 benchmark feature tests still pass against Allen; no feature definitions,
   downstream scores or cached Allen data were changed. This completes only the
   requested integration simplification, not the rest of Subgoal 7.
-- [ ] Profile hotspots in sweep and cell feature computation
+- [x] Profile hotspots in sweep and cell feature computation (Subgoal 18)
 - [x] Remove redundant computations via reusable intermediate results
-- [ ] Keep APIs simple and avoid overengineering
-- [ ] Refactor only where it improves maintainability/readability
-- [ ] Re-run parity and regression tests after each optimization batch
+- [x] Keep APIs simple and avoid overengineering
+- [x] Refactor only where it improves maintainability/readability
+- [x] Re-run parity and regression tests after each optimization batch
 - [x] Add session-level precompute cache in `tests/conftest.py` for Allen/JAX expected feature values to avoid repeated recomputation across test modules
 - [x] Evaluate optional persisted per-specimen feature cache format under `tests/testdata/allen_cache/specimen_<id>/` only after session-cache workflow is stable
-- [ ] Make running the test suite as fast as possible, remove unecessary computations and rely on cached features for Allen specimen test data.
-- [ ] Reduce parity fixture setup overhead (currently dominates runtime) and evaluate optional on-disk precompute cache keyed by Allen extractor/source hash to avoid stale reuse.
+- [x] Make running the test suite as fast as possible, remove unecessary computations and rely on cached features for Allen specimen test data (Subgoal 15: about 3 min by default)
+- [x] Reduce parity fixture setup overhead and add an on-disk precompute cache keyed by the Allen source hash (Subgoal 15: `tests/testdata/allen_reference/`)
 
 Exit criteria:
 - Performance improves or code is simpler without changing validated outputs.
@@ -150,16 +161,18 @@ Exit criteria:
 ## Subgoal 8 - Make features jittable
 Goal: Ensure core feature paths can be compiled with `jax.jit`.
 
-- [ ] Identify non-jittable control flow and data structures
-- [ ] Replace Python-heavy branches with JAX-friendly patterns where needed
-- [ ] Add tests that execute selected features under `jax.jit`
-- [ ] Confirm output parity between eager and jitted modes
+- [x] Identify non-jittable control flow and data structures
+- [x] Replace Python-heavy branches with JAX-friendly patterns where needed
+- [x] Add tests that execute selected features under `jax.jit` (`tests/test_jax_behavior.py`, `tests/test_cutoff.py`)
+- [x] Confirm output parity between eager and jitted modes (all public entry points are jitted internally, Subgoal 16)
 
 Exit criteria:
 - Selected core sweep and cell features run under `jax.jit` and match eager outputs.
 
 ## Subgoal 9 - Make features differentiable (or provide differentiable variants)
 Goal: Enable gradient-based workflows for feasible features.
+Status (2026-10-20, not scheduled): finite gradients of spike voltages are tested
+(`tests/test_jax_behavior.py`); the per-feature audit has not started.
 
 - [ ] Audit features for non-differentiable operations (argmax, thresholding, indexing)
 - [ ] For each such feature, decide:
@@ -172,31 +185,19 @@ Goal: Enable gradient-based workflows for feasible features.
 Exit criteria:
 - Differentiability status is explicit per feature, with tested behavior.
 
-## Subgoal 10 - Cleanup and release readiness
-Goal: Final cleanup, docs alignment, and reliable test workflow.
+## Subgoal 10 - Cleanup and release readiness (step 5)
+Goal: Ready for publication on GitHub (not PyPI yet). Decisions (user, 2026-10-20): GitHub-only release; `allen_ephys` stays in the repo and package with its original third-party license; no CI changes; the downloadable Allen recordings leave the repository (the user commits, purges history and force-pushes, following instructions); examples as a series of simple notebooks; code documentation, type hints and a Read the Docs site like jaxley's.
 
-- [ ] Remove temporary Allen DB reporting helpers once parity checks are finalized
-- [ ] Remove dead code and stale experimental helpers
-- [ ] Ensure docs match real commands, paths, and package names
-- [ ] Ensure cache precondition is clearly communicated in pytest failures
-- [ ] Run complete test suite and report final status
-- [ ] Prepare concise implementation summary and known limitations
+- [-] Stop tracking `tests/data/allen_cache/` (`.gitignore` done) and write instructions for removing it from history (instructions given 2026-10-21; the user commits, rewrites history and force-pushes)
+- [x] Package metadata in `pyproject.toml` (description, license, links, classifiers, single-sourced version)
+- [x] Docstrings and type hints for all public functions and non-trivial helpers
+- [x] Examples `examples/01_spikes.ipynb`, `02_sweeps`, `03_sweepsets`, `04_cell_features` and `05_speed_batches_gradients`, executed (they replace `00_basics.ipynb`)
+- [x] Docs: Sphinx with `sphinx_book_theme`, `myst_nb` (pre-executed notebooks) and an autosummary API reference under `docs/`, `.readthedocs.yaml`, `docs` dependency group; local build without warnings
+- [x] README, concise as the user asked (performance details moved to `docs/performance.md`), and `CHANGELOG.md` (0.1.0)
+- [x] Remove obsolete helpers and dead code (`tests/allen_ephys/report_match_data.py`); run the complete test suite; summarize known limitations
 
 Exit criteria:
 - Repository is consistent, documented, and ready for continued development.
-
-## Subgoal 11 - Regression benchmarks and performance hardening
-Goal: Add repeatable performance regression tests, then optimize safely against them.
-
-- [ ] Add benchmark fixtures and representative inputs for core sweep/cell feature paths
-- [ ] Add a reproducible benchmark runner (stable warmup/repeat settings)
-- [ ] Record baseline metrics and store them in-repo for regression comparison
-- [ ] Add CI/dev checks that fail on meaningful regressions beyond tolerance
-- [ ] Optimize hotspot kernels while preserving parity/regression correctness
-- [ ] Define an agent-driven optimization loop protocol guarded by parity + benchmark gates
-
-Exit criteria:
-- Performance regressions are automatically detected and optimization work is gated by correctness + benchmark checks.
 
 ## Subgoal 12 - Feature diagnostics toolkit
 Goal: Add diagnostics utilities for feature-level introspection and debugging after regression benchmarking is in place.
@@ -225,10 +226,10 @@ Exit criteria:
 ## Subgoal 14 - Bonus: JAX cell-level features and parity tests
 Goal: Compute cell-level features from sweep/sweepset building blocks after sweepset parity is complete.
 
-- [ ] Implement cell-level APIs using sweep/sweepset feature vectors
-- [ ] Ensure APIs are vmappable across cells `[C, S, T]`
-- [ ] Implement parity tests for rheobase and other targeted cell features
-- [ ] Validate parity on cached mixed-cell panel
+- [x] Implement cell-level APIs using sweep/sweepset feature vectors (Subgoal 17)
+- [x] Ensure APIs are vmappable across cells (stacked `[C, S]` features with a `valid` mask)
+- [x] Implement parity tests for rheobase and other targeted cell features (`tests/test_cell_parity.py`)
+- [x] Validate parity on cached mixed-cell panel (all 8 specimens)
 
 Exit criteria:
 - Cell-level JAX features pass parity tests and work on batched inputs.
@@ -259,7 +260,7 @@ Goal: Replace event detection and spike/sweep features with the review prototype
 - [x] (user request) Dependency split: runtime `jax` + `numpy`; `allen` extra (`pandas`, `scipy`) for `allen_ephys`, which is now part of the wheel together with its license; `dev` dependency group (PEP 735) for tests, notebooks and tooling
 
 Exit criteria:
-- Spike and sweep parity on all cached specimens without xfails (documented deviations only). Verified on the default specimen; the full panel awaits the user's calibration run.
+- Spike and sweep parity on all cached specimens without xfails (documented deviations only). Verified on all 8 cached specimens (2026-10-20, one process per specimen).
 
 ## Subgoal 17 - Cell-level features following Allen's conventions
 Goal: Replace the nanmean sweepset aggregates with what Allen computes (step 3).
@@ -268,26 +269,26 @@ Goal: Replace the nanmean sweepset aggregates with what Allen computes (step 3).
 - [x] Cell features with Allen DB feature names (`cell_features`; DB-matching heuristics stay in the DB comparison tests)
 - [x] Pipeline spike -> sweep -> sweepset -> cell features (user design): sweepset and cell functions take stacked `[S]` sweep and first-spike features (no traces), with a `valid` mask for padded sweep sets; `extract_cell_features` runs it on lists of sweeps
 - [x] Fill in the sweepset and cell-feature cells of `examples/00_basics.ipynb`
-- Moved to Subgoals 7/11 (agreed with the user): batching helper for sweeps of unequal length (exact filtering); with length-independent sweepset features it is only a speed-up
+- [x] Batching of sweeps of unequal length (moved to Subgoal 18 and done there: NaN-padded time axes)
 
 Exit criteria:
 - Cell-level parity with vendored Allen on all cached specimens.
 
-Steps 4 (performance polish) and 5 (publication) of the review continue in Subgoals 7/11 and 10.
+Steps 4 (performance) and 5 (publication) of the review are Subgoals 18 and 10.
 
 ## Subgoal 18 - Performance on CPU (step 4)
 Goal: jaxley_ephys is simply fast: users prefer it over (vendored) Allen in eager and in
 jitted use, for single sweeps and (much more so) for batches. Scope set by the user
 (2026-10-20): CPU only (GPU ideas are recorded for a later pass), benchmarks local only
-and minimal, no micro-optimization. Takes over the open performance items of
-Subgoals 7 and 11 (incl. the batching helper for unequal sweep lengths).
+and minimal, no micro-optimization. Replaces Subgoal 11 and takes over the open
+performance items of Subgoal 7 (incl. the batching helper for unequal sweep lengths).
 
 - [x] Minimal local benchmark (`benchmarks/run.py`, baseline in `benchmarks/baseline.json`): eager first call and warm time per sweep, vmap over sweeps, a whole cell, vs vendored Allen
 - [x] Profile and remove the main costs (`tau` under vmap, passes over the trace, filtering, compile time)
 - [x] Performance notes in the docs (compilation cache, batching) and GPU notes for a later pass
 - [x] (user request) `t_cutoff` keyword of `detect_spikes` (default 20 ms after `end`, where no result changes): samples after it are not analysed and NaN in the returned full-length traces; skipped when `t` is concrete, masked when traced
 - [x] Sweeps of unequal length batch exactly when padded with NaN times (replaces the batching helper)
-- Open option (user decision): analyse the sweeps of a cell in a thread pool (about 2x on an 8-thread laptop; more memory at once)
+- [!] Optional: analyse the sweeps of a cell in a thread pool (about 2x on an 8-thread laptop; more memory at once); waiting for a user decision
 
 Exit criteria:
 - Faster than vendored Allen per sweep after compilation and much faster with vmap; compile time reduced; results unchanged (float64 exact, float32 within its tolerances).
@@ -315,7 +316,9 @@ This section is a required workflow contract for implementing JAX features.
   - Do not modify expected outputs/tolerances to hide implementation mismatches.
   - Only update tests when correcting incorrect test assumptions or fixture wiring.
 - **Output contracts**
-  - Spike feature primitive signature: `feature_name(t, v, i, ev, dvdt) -> Array[max_spikes]`.
+  - `detect_spikes(t, v, i, start, end, ...) -> Spikes`; `spike_features(sp)` returns
+    `[max_spikes]` arrays per Allen spike-table column; `sweep_features(sp)` scalars;
+    sweepset and cell features take stacked `[S]` feature dicts.
   - Index features use `-1` padding; continuous features use `jnp.nan` padding.
   - Keep outputs vmappable/jittable with fixed-size arrays.
 - **Categorical encoding**
@@ -324,9 +327,8 @@ This section is a required workflow contract for implementing JAX features.
     - `0` direct
     - `1` detour
 - **Implementation sequencing**
-  - Complete all core spike features first.
-  - Complete all core sweep features second.
-  - Only then revisit advanced/burst features (requires explicit user approval).
+  - Core spike, sweep, sweepset and cell features are complete.
+  - Advanced/burst features (Subgoal 13) require explicit user approval.
 - **Reporting requirement**
   - After feature implementation is complete, produce a thorough report including:
     - implemented features and parity status
@@ -394,3 +396,4 @@ This section is a required workflow contract for implementing JAX features.
 - 2026-10-20: float32 support (user request, fix to Subgoal 16 code). Without x64, float32 time axes failed the fixed-dt check, so dV/dt was never filtered and divided by intervals several % off. `calculate_dvdt` now takes the sampling interval of evenly sampled traces from the whole time axis and tolerates the rounding of `t`; the `tau` fit is centered on the mean voltage. float64 is unchanged (still exact). float32 vs Allen on all 8 cached specimens: identical spike counts; of about 14,000 spike indices a few move by one sample and 2 by more (window-edge trough, flat-dV/dt fast trough); features within 2e-4, `tau` and `sag` within 1.5e-3. `tests/test_float32.py` checks these tolerances.
 - 2026-10-20: Completed Subgoal 18 (performance on CPU). `benchmarks/run.py` (local, minimal) compares with vendored Allen on the default specimen. Changes: `tau` fit with a noise-tolerant step test, a trust region that grows again, secant curvature (superlinear; 3-10 instead of 5-100 iterations on the cached sweeps) and stops for degenerate fits (line or step, collapsed trust region), which also keeps one ill-posed sweep from holding up a vmapped batch; filter scans unrolled 4x (2x faster); the 1 kHz dV/dt and the `tau`/`sag` fits skipped via `lax.cond` where they cannot matter (sweeps without spikes, non-hyperpolarizing sweeps); `detect_spikes` skips samples more than about 20 ms after `end` when `t` and `end` are concrete (exact to rounding; lengths rounded up to 2^14 samples so similar windows share a compiled shape); host-side checks in NumPy. Measured on a quiet machine (speedup vs vendored Allen, before -> after): long square 0.4x -> 1.1x, short square 0.7x -> 0.7x, ramp 2.1x -> 7.7x, loop over 14 long squares 0.3x -> 1.1x, vmap over them 0.1x -> 0.4x, whole cell 0.9x -> 2.6x (1.7 s); 128 short synthetic traces 2.6x (loop) / 2.3x (vmap). Not met: on CPU `vmap` is not faster than a loop (single-threaded execution; selects instead of skips), and the first call per trace length still compiles for about 2 s per function set (whole cell in a fresh process: 13 s; the JAX compilation cache brings later sessions to about 2.5 s). All 8 specimens pass the sweep, cell and float32 parity tests (one process per specimen, at most 3.9 GB).
 - 2026-10-20: Subgoal 18 follow-up (user request): `detect_spikes(..., t_cutoff=None)` replaces the implicit tail skipping. Samples after `t_cutoff` (default: 20 ms after `end`, the reach of the peak search and of the filter transients) are not analysed; `Spikes.t`, `v`, `i` and `dvdt` keep the input length and are NaN there, so user arrays line up again. The core treats trailing NaN times as outside the sweep (`find_time_index`, `calculate_dvdt`, short-square amplitude), so an explicit `t_cutoff` also works under `jit` (masked) and NaN-padded sweeps of unequal length batch exactly. Default vs whole sweep, explicit cutoff vs a sliced sweep, jit vs eager and NaN-padded vs unpadded all agree exactly (`tests/test_cutoff.py`). `spike_features` and `sweep_features` skip the NaN tail of concrete traces, so the full-length results cost no speed (A/B: 24.7 vs 27.1 ms per long square).
+- 2026-10-21: Subgoal 10 (publication, step 5), all but the git steps the user runs. Package metadata (description, `MIT AND LicenseRef-Allen-Institute-Software-License`, links, classifiers, version from `jaxley_ephys.__version__`); type hints and docstrings for the helpers; examples `01_spikes` to `05_speed_batches_gradients` (executed; they replace `00_basics`); Sphinx docs (`docs/`, `sphinx_book_theme`, `myst_nb` without execution, autosummary API, pages on installation, tutorials, performance, the relation to the AllenSDK and the changelog; build passes with `-W`); `.readthedocs.yaml` (`pip install . --group docs`); concise README; `CHANGELOG.md`; `.gitignore` covers `tests/data/allen_cache/`. Also fixed `tests/test_cutoff.py` for 6 s sweeps (it failed in CI on specimen 525011903) and revised this plan (Subgoals 7, 8 and 14 ticked, 11 dropped, 9/12/13 marked as not scheduled). Default run 251 passed; `--allen` 305 passed, 1 skipped. Known limitations: `vmap` is not faster than a loop on CPU (GPU not tuned); the first call per trace length compiles for about 2 s per set of functions; short squares run at about 0.7x Allen's speed; Allen's burst, pause and delay metrics are not implemented (Subgoal 13); spike times and counts have zero gradients; float32 deviates by about 1e-4; `v_baseline` needs a start time (Allen's flat-interval search is not reproduced).

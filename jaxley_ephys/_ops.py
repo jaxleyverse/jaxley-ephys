@@ -15,7 +15,7 @@ import jax.numpy as jnp
 from jax import Array, lax
 
 
-def take(values: Array, idx: Array, fill=jnp.nan) -> Array:
+def take(values: Array, idx: Array, fill: float = jnp.nan) -> Array:
     """``values[idx]`` where ``idx >= 0``, ``fill`` elsewhere."""
     valid = idx >= 0
     return jnp.where(valid, values[jnp.where(valid, idx, 0)], fill)
@@ -28,12 +28,12 @@ def compact(keep: Array, *arrays: Array) -> tuple[Array, ...]:
     return tuple(jnp.where(valid, a[order], -1) for a in arrays)
 
 
-def shift_left(values: Array, fill) -> Array:
+def shift_left(values: Array, fill: float | bool) -> Array:
     """``values[k + 1]`` with ``fill`` for the last entry."""
     return jnp.concatenate([values[1:], jnp.asarray([fill], dtype=values.dtype)])
 
 
-def shift_right(values: Array, fill) -> Array:
+def shift_right(values: Array, fill: float | bool) -> Array:
     """``values[k - 1]`` with ``fill`` for the first entry."""
     return jnp.concatenate([jnp.asarray([fill], dtype=values.dtype), values[:-1]])
 

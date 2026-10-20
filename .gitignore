@@ -12,7 +12,9 @@ wheels/
 # Legacy AllenSDK default cache path (avoid new cache here)
 cell_types/
 
-# Re-downloadable AllenSDK raw cache (directory or symlink); keep processed test artifacts in tests/testdata/
+# Re-downloadable AllenSDK raw cache (tests/load_testdata.py): the directory and the
+# symlink to it; keep processed test artifacts in tests/testdata/
+tests/data/allen_cache/
 tests/testdata/allen_cache
 
 # Vendored-Allen reference outputs, rebuilt by tests/build_reference.py
@@ -20,3 +22,7 @@ tests/testdata/allen_reference/
 
 # Local preprocessed Allen traces (large, reproducible)
 tests/testdata/cell_*_data.npz
+
+# Documentation build (uv run --group docs sphinx-build docs docs/_build/html)
+docs/_build/
+docs/generated/

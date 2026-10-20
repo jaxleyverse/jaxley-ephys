@@ -4,12 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jaxley-ephys"
-version = "0.1.0"
-description = "Add your description here"
+dynamic = ["version"]
+description = "Electrophysiological features in JAX that match the AllenSDK feature extraction"
 readme = "README.md"
-# allen_ephys (vendored AllenSDK code) keeps its own license
+authors = [{ name = "jaxley-ephys contributors" }]
+# jaxley_ephys is MIT licensed; allen_ephys (vendored AllenSDK code) keeps its own license
+license = "MIT AND LicenseRef-Allen-Institute-Software-License"
 license-files = ["LICENSE", "THIRD_PARTY_LICENSES/*"]
 requires-python = ">=3.12"
+keywords = ["electrophysiology", "neuroscience", "spike detection", "jax", "allensdk"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
 dependencies = [
     "jax>=0.9.1",
     "numpy>=2.4.2",
@@ -21,6 +31,13 @@ allen = [
     "pandas>=3.0.1",
     "scipy>=1.17.1",
 ]
+
+[project.urls]
+Repository = "https://github.com/jaxleyverse/jaxley-ephys"
+Documentation = "https://jaxley-ephys.readthedocs.io"
+
+[tool.setuptools.dynamic]
+version = { attr = "jaxley_ephys.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["jaxley_ephys*", "allen_ephys*"]
@@ -37,4 +54,9 @@ dev = [
     "pre-commit>=4.5.1",
     "pytest>=9.0.2",
     "ruff>=0.15.4",
+]
+docs = [
+    "myst-nb>=1.4.0",
+    "sphinx>=9.1.1",
+    "sphinx-book-theme>=1.4.0",
 ]

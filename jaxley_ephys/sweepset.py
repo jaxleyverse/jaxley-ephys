@@ -205,14 +205,19 @@ def ramp_features(
 
 
 @partial(jax.jit, static_argnames=("filter",))
-def _passive_dvdt(t, v, lo, hi, *, filter):
+def _passive_dvdt(
+    t: Array, v: Array, lo: int, hi: int, *, filter: float
+) -> tuple[Array, Array, Array]:
+    """dV/dt of a short square, its maximum in ``[lo, hi)`` and its value at ``hi``."""
     dvdt = calculate_dvdt(v, t, filter)
     x = jnp.arange(dvdt.shape[0])
     return dvdt, jnp.max(jnp.where((x >= lo) & (x < hi), dvdt, -jnp.inf)), dvdt[hi]
 
 
 @partial(jax.jit, static_argnames=("max_spikes",))
-def _upstroke_dvdt(v, dvdt, dv_cutoff, *, max_spikes):
+def _upstroke_dvdt(
+    v: Array, dvdt: Array, dv_cutoff: Array, *, max_spikes: int
+) -> tuple[Array, Array, Array]:
     """dV/dt at the upstrokes of the putative spikes in the whole sweep."""
     v = jnp.asarray(v, dtype=float)
     end = v.shape[0] - 1

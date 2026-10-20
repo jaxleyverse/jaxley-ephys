@@ -1,5 +1,7 @@
 """Electrophysiological features of voltage traces in JAX, matching the Allen
-Institute's ``ipfx``/AllenSDK feature extraction."""
+Institute's AllenSDK feature extraction."""
+
+__version__ = "0.1.0"
 
 from .dvdt import calculate_dvdt
 from .spikes import (

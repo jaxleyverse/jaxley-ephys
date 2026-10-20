@@ -97,8 +97,15 @@ def _next_or(idx: Array, default: Array) -> Array:
     return jnp.where(nxt >= 0, nxt, default)
 
 
-def _putative_spikes(dvdt_window, start_idx, end_idx, dv_cutoff, max_spikes):
-    """Upward dV/dt crossings of ``dv_cutoff`` (``detect_putative_spikes``)."""
+def _putative_spikes(
+    dvdt_window: Array,
+    start_idx: Array,
+    end_idx: Array,
+    dv_cutoff: Array,
+    max_spikes: int,
+) -> tuple[Array, Array]:
+    """Upward dV/dt crossings of ``dv_cutoff`` (``detect_putative_spikes``) and
+    whether there were more than ``max_spikes``."""
     x = jnp.arange(dvdt_window.shape[0])
     above = dvdt_window >= dv_cutoff
     crossing = ~above & shift_left(above, False)
@@ -112,7 +119,14 @@ def _putative_spikes(dvdt_window, start_idx, end_idx, dv_cutoff, max_spikes):
     return compact(keep, candidates)[0], jnp.sum(crossing) > max_spikes
 
 
-def _filter_putative_spikes(v, dvdt, spikes, peaks, min_height, min_peak):
+def _filter_putative_spikes(
+    v: Array,
+    dvdt: Array,
+    spikes: Array,
+    peaks: Array,
+    min_height: Array,
+    min_peak: Array,
+) -> tuple[Array, Array]:
     """Merge spikes without a dV/dt dip in between, then apply height criteria
     (``filter_putative_spikes``)."""
     k = jnp.arange(spikes.shape[0])
@@ -128,16 +142,16 @@ def _filter_putative_spikes(v, dvdt, spikes, peaks, min_height, min_peak):
 
 
 def _putative_upstrokes(
-    v,
-    dvdt,
-    dvdt_window,
-    start_idx,
-    end_idx,
-    dv_cutoff,
-    min_height,
-    min_peak,
-    max_spikes,
-):
+    v: Array,
+    dvdt: Array,
+    dvdt_window: Array,
+    start_idx: Array,
+    end_idx: Array,
+    dv_cutoff: Array,
+    min_height: Array,
+    min_peak: Array,
+    max_spikes: int,
+) -> tuple[Array, Array, Array, Array]:
     """Putative spikes, their peaks and upstrokes (first stages of detection)."""
     size = v.shape[0]
     spikes, overflow = _putative_spikes(
@@ -152,11 +166,14 @@ def _putative_upstrokes(
     return spikes, peaks, ups, overflow
 
 
-def _upstroke_target(dvdt, upstrokes, thresh_frac):
+def _upstroke_target(dvdt: Array, upstrokes: Array, thresh_frac: Array) -> Array:
+    """dV/dt that defines the threshold: ``thresh_frac`` times the mean upstroke."""
     return thresh_frac * masked_mean(take(dvdt, upstrokes), upstrokes >= 0)
 
 
-def _thresholds_from_upstrokes(dvdt, upstrokes, lower, target):
+def _thresholds_from_upstrokes(
+    dvdt: Array, upstrokes: Array, lower: Array, target: Array
+) -> Array:
     """Last sample in ``(lower, upstroke]`` with ``dvdt <= target``, else ``lower``
     (``refine_threshold_indexes``)."""
     below = prev_true(dvdt <= target)[jnp.maximum(upstrokes, 0)]
@@ -164,8 +181,16 @@ def _thresholds_from_upstrokes(dvdt, upstrokes, lower, target):
 
 
 def _check_thresholds_and_peaks(
-    t, v, dvdt, thr, peaks, ups, end_idx, max_interval, thresh_frac
-):
+    t: Array,
+    v: Array,
+    dvdt: Array,
+    thr: Array,
+    peaks: Array,
+    ups: Array,
+    end_idx: Array,
+    max_interval: Array,
+    thresh_frac: Array,
+) -> tuple[Array, Array, Array]:
     """Allen's ``check_thresholds_and_peaks``: merge overlapping spikes, repair
     spikes whose peak comes too late after threshold, mark a clipped last spike."""
     size, num = v.shape[0], thr.shape[0]
@@ -209,7 +234,16 @@ def _check_thresholds_and_peaks(
     return thr, peaks, clipped
 
 
-def _trough_details(t, v, dvdt, dvdt_heavy, thr, peaks, clipped, end_idx):
+def _trough_details(
+    t: Array,
+    v: Array,
+    dvdt: Array,
+    dvdt_heavy: Array,
+    thr: Array,
+    peaks: Array,
+    clipped: Array,
+    end_idx: Array,
+) -> tuple[Array, Array, Array, Array, Array]:
     """Allen's ``analyze_trough_details`` with its defaults: fast trough, ADP,
     slow trough and ISI type; spikes without a fast trough become clipped."""
     size, num = v.shape[0], thr.shape[0]
@@ -253,21 +287,22 @@ def _trough_details(t, v, dvdt, dvdt_heavy, thr, peaks, clipped, end_idx):
 
 @partial(jax.jit, static_argnames=("filter", "max_spikes"))
 def _detect_spikes(
-    t,
-    v,
-    i,
-    start,
-    end,
+    t: Array,
+    v: Array,
+    i: Array | None,
+    start: Array | None,
+    end: Array | None,
     *,
-    filter,
-    dv_cutoff,
-    max_interval,
-    min_height,
-    min_peak,
-    thresh_frac,
-    t_cutoff,
-    max_spikes,
+    filter: float | None,
+    dv_cutoff: Array,
+    max_interval: Array,
+    min_height: Array,
+    min_peak: Array,
+    thresh_frac: Array,
+    t_cutoff: Array,
+    max_spikes: int,
 ) -> Spikes:
+    """The compiled part of ``detect_spikes`` (same arguments)."""
     # Compute in the default float precision (float64 if ``jax_enable_x64`` is set).
     t, v = jnp.asarray(t, dtype=float), jnp.asarray(v, dtype=float)
     i = None if i is None else jnp.asarray(i, dtype=float)
@@ -352,7 +387,7 @@ _TRANSIENT_DECAY = 1e-20
 _LENGTH_STEP = 2**14
 
 
-def _host_time(t) -> tuple[np.ndarray, float]:
+def _host_time(t: Array) -> tuple[np.ndarray, float]:
     """The times of the sweep as a float64 NumPy array (without trailing NaN
     times), and the rounding of their original precision."""
     t = np.asarray(t)
@@ -372,7 +407,13 @@ def _sampling_interval(t: np.ndarray, rounding: float) -> float | None:
     return step if np.all(np.abs(np.diff(t) - step) <= tol) else None
 
 
-def _check_cutoff(t: np.ndarray, rounding: float, start, end, filter: float) -> None:
+def _check_cutoff(
+    t: np.ndarray,
+    rounding: float,
+    start: float | None,
+    end: float | None,
+    filter: float,
+) -> None:
     """Raise like Allen's ``calculate_dvdt`` if ``filter`` is not below the Nyquist
     frequency of the trace or of the analysis window (where evenly sampled)."""
     lo = 0 if start is None else min(np.searchsorted(t, start), t.size - 1)
@@ -391,7 +432,11 @@ def _check_cutoff(t: np.ndarray, rounding: float, start, end, filter: float) -> 
 
 
 def _default_cutoff(
-    t: np.ndarray, rounding: float, end, filter: float | None, max_interval: float
+    t: np.ndarray,
+    rounding: float,
+    end: float | None,
+    filter: float | None,
+    max_interval: float,
 ) -> float | None:
     """The earliest ``t_cutoff`` that cannot change any result for an analysis
     window ending at ``end``: the reach of the peak search (``2 * max_interval``)

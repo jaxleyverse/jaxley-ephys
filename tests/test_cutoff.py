@@ -29,7 +29,8 @@ def test_default_cutoff_changes_no_result(sweeps):
     whole = detect_spikes(s.t, s.v, s.i, s.start, s.end, t_cutoff=np.inf)
     assert default.t.shape == default.dvdt.shape == s.t.shape
     analysed = ~np.isnan(np.asarray(default.t))
-    assert analysed.sum() < s.t.size / 3  # a long sweep with a 1 s window
+    last = s.t[analysed][-1]  # the analysis stops about 20 ms after the window
+    assert s.end + 0.01 < last < s.end + 0.05 < s.t[-1]
     assert np.all(np.isnan(np.asarray(default.v)[~analysed]))
     _assert_same(_features(default, "long_square"), _features(whole, "long_square"))
 
