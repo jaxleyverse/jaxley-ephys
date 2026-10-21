@@ -2,7 +2,8 @@
 
 Every feature takes the ``Spikes`` of one sweep (see ``detect_spikes``) and returns
 a scalar, NaN where it is undefined. Units: s for ``latency``, ms for the
-interspike intervals and ``tau``, mV for voltages, pA for ``stim_amp``.
+interspike intervals, ``tau`` and ``delay_tau``, mV for voltages, pA for
+``stim_amp``.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import jax.numpy as jnp
 from jax import Array, lax
 
 from ._ops import masked_mean, take
+from .patterns import burst_metrics, delay_metrics, pause_metrics
 from .spikes import Spikes, _analysed, find_time_index
 
 BASELINE_INTERVAL = 0.1  # s
@@ -359,18 +361,35 @@ STIMULUS_AMPLITUDE = {
 }
 
 
-def sweep_features(sp: Spikes, stimulus: str | None = None) -> dict[str, Array]:
+def sweep_features(
+    sp: Spikes,
+    stimulus: str | None = None,
+    *,
+    bursts: bool = False,
+    pauses: bool = False,
+    delays: bool = False,
+) -> dict[str, Array]:
     """All sweep-level features as scalars (NaN where undefined).
 
     ``stimulus`` (``"long_square"``, ``"short_square"``, ``"ramp"`` or ``None``)
     selects how ``stim_amp`` is measured, as in Allen's cell extractor; it is NaN
     for ramps, ``None`` and sweeps without current.
+
+    Allen's firing-pattern metrics are added on request, with Allen's defaults:
+    ``bursts`` adds ``max_burstiness`` and ``n_bursts`` (``burst_metrics``),
+    ``pauses`` adds ``n_pauses`` and ``pause_frac`` (``pause_metrics``) and
+    ``delays`` adds ``delay_ratio`` and ``delay_tau`` (ms; ``delay_metrics``).
+    The delay fits exponentials to the rise before the first spike: it costs a
+    few ms per sweep, and it differs from Allen where Allen's fit misses a
+    double exponential.
     """
-    return _sweep_features(_analysed(sp), stimulus)
+    return _sweep_features(_analysed(sp), stimulus, bursts, pauses, delays)
 
 
-@partial(jax.jit, static_argnames=("stimulus",))
-def _sweep_features(sp: Spikes, stimulus: str | None) -> dict[str, Array]:
+@partial(jax.jit, static_argnames=("stimulus", "bursts", "pauses", "delays"))
+def _sweep_features(
+    sp: Spikes, stimulus: str | None, bursts: bool, pauses: bool, delays: bool
+) -> dict[str, Array]:
     if stimulus is not None and stimulus not in STIMULUS_AMPLITUDE:
         raise ValueError(
             f"stimulus must be None or one of {list(STIMULUS_AMPLITUDE)}, got {stimulus!r}"
@@ -384,4 +403,10 @@ def _sweep_features(sp: Spikes, stimulus: str | None) -> dict[str, Array]:
         out["stim_amp"] = jnp.asarray(jnp.nan, dtype=sp.v.dtype)
     else:
         out["stim_amp"] = amplitude(sp)
+    if bursts:
+        out["max_burstiness"], out["n_bursts"] = burst_metrics(sp)
+    if pauses:
+        out["n_pauses"], out["pause_frac"] = pause_metrics(sp)
+    if delays:
+        out["delay_ratio"], out["delay_tau"] = delay_metrics(sp)
     return out

@@ -4,7 +4,9 @@ Exact parity needs float64; in float32 jaxley_ephys stays close (see
 allen_ephys/ALLEN_EPHYS_FIXES.md, section 6). On the 8 cached specimens: same
 spike counts; of about 14,000 spike indices a few move by one sample and 2 by
 more (a trough at the window edge, a fast trough in a flat stretch of dV/dt);
-features agree to about 2e-4, ``tau`` and ``sag`` to 1.5e-3. The inputs are the
+features agree to about 2e-4, ``tau`` and ``sag`` to 1.5e-3. Burst and pause
+metrics agree with Allen to about 1e-5; the delay, which does not match Allen
+exactly in float64 either, agrees with float64 to 1.6e-3. The inputs are the
 float64 traces, which JAX casts to float32 as for any user without x64.
 """
 
@@ -20,7 +22,7 @@ from tests.utils.parity import SPIKE_COLUMNS, allen_values, jax_values
 
 # tau also includes Allen's own optimizer tolerance (up to 1.1e-3); sag is a
 # ratio with a small numerator.
-RTOL = {"tau": 3e-3, "sag": 3e-3}
+RTOL = {"tau": 3e-3, "sag": 3e-3, "delay": 3e-3}
 DEFAULT_RTOL = 5e-4
 ATOL = 1e-6
 MAX_INDEX_SHIFT = 1  # samples
@@ -43,6 +45,7 @@ def float32_results(sweeps):
                     stimulus=kind,
                     dv_cutoff=s.dv_cutoff,
                     thresh_frac=s.thresh_frac,
+                    delay=kind == "long_square",
                 )
                 for s in sweeps[kind]
             ]
@@ -108,6 +111,29 @@ def test_float32_sweep_features_match_allen(reference, float32_results, kind):
         for ref, res in zip(reference["sweeps"][kind], float32_results[0][kind])
         for name in SWEEP_FEATURES
         if not _close(name, ref["features"][name], res["features"][name])
+    ]
+    assert not problems, problems[:5]
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_float32_burst_and_pause_metrics_match_allen(reference, float32_results, kind):
+    problems = [
+        f"sweep {ref['sweep_number']} {name}: {res['patterns'][name]} vs "
+        f"{ref['patterns'][name]}"
+        for ref, res in zip(reference["sweeps"][kind], float32_results[0][kind])
+        for name in ("burst", "pause")
+        if not _close(name, ref["patterns"][name], res["patterns"][name]).all()
+    ]
+    assert not problems, problems[:5]
+
+
+def test_float32_delay_metrics_match_float64(results, float32_results):
+    problems = [
+        f"sweep {k}: {res['patterns']['delay']} vs {ref['patterns']['delay']}"
+        for k, (ref, res) in enumerate(
+            zip(results["long_square"], float32_results[0]["long_square"])
+        )
+        if not _close("delay", ref["patterns"]["delay"], res["patterns"]["delay"]).all()
     ]
     assert not problems, problems[:5]
 

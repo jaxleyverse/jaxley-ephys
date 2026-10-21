@@ -5,6 +5,13 @@ On a CPU, jaxley-ephys analyses a whole cell of the Allen Cell Types Database ab
 squares about as fast; batches of short (e.g. simulated) traces take about 3 ms per
 trace. `uv run python benchmarks/run.py` measures this on your machine.
 
+The firing-pattern metrics, which `sweep_features` adds on request, take about
+0.2 ms (`pauses=True`) and 0.4 ms (`bursts=True`) per long square, 2.5-5 times
+faster than Allen's; the delay (`delays=True`), which fits exponentials to the
+rise before the first spike, takes about 5 ms (up to 60 ms), about as fast as
+Allen's fit. Its cost grows with the time from `start` to the first spike, not
+with the length of the sweep.
+
 ## Compilation
 
 Everything is compiled on the first call for each trace length (about 2 s per set

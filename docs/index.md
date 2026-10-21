@@ -26,8 +26,8 @@ features = sweep_features(sp, stimulus="long_square")  # avg_rate, latency, tau,
   (see [](allen.md)).
 - **Fast:** about 2.5 times faster than the AllenSDK code for a whole cell on a
   CPU, more for long recordings.
-- **JAX:** compiled once per trace length, batched with `jax.vmap`, differentiable,
-  and in float32 within about 1e-4 of Allen.
+- **JAX:** compiled once per trace length, batched with `jax.vmap`, and in float32
+  within about 1e-4 of Allen.
 
 ```{toctree}
 :hidden:

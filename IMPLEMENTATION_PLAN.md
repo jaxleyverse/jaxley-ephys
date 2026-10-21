@@ -14,12 +14,13 @@ This file is the canonical execution plan for `jaxley-ephys`.
 - `[x]` completed
 - `[!]` blocked (waiting on user decision or external issue)
 
-## Status overview (2026-10-20)
-- Done: Subgoals 1-8 and 14-18 (the 2026-10-19 review plan: parity harness, core
-  rewrite, cell level, CPU performance, float32 support).
-- In progress: Subgoal 10 (publication on GitHub, review step 5).
-- Later, not scheduled: Subgoals 9 (differentiable variants), 12 (diagnostics
-  toolkit) and 13 (burst and advanced features).
+## Status overview (2026-10-21)
+- Done: Subgoals 1-8, 10 and 14-18 (the 2026-10-19 review plan: parity harness,
+  core rewrite, cell level, CPU performance, float32 support, publication prep)
+  and 13 (burst, pause and delay metrics).
+- Waiting for the user: making the repository public and importing it on Read the Docs.
+- Later, not scheduled: Subgoals 9 (differentiable variants) and 12 (diagnostics
+  toolkit).
 - Dropped: Subgoal 11 (benchmark CI gates and an optimization-loop protocol);
   benchmarks stay local and minimal (Subgoal 18).
 
@@ -188,7 +189,7 @@ Exit criteria:
 ## Subgoal 10 - Cleanup and release readiness (step 5)
 Goal: Ready for publication on GitHub (not PyPI yet). Decisions (user, 2026-10-20): GitHub-only release; `allen_ephys` stays in the repo and package with its original third-party license; no CI changes; the downloadable Allen recordings leave the repository (the user commits, purges history and force-pushes, following instructions); examples as a series of simple notebooks; code documentation, type hints and a Read the Docs site like jaxley's.
 
-- [-] Stop tracking `tests/data/allen_cache/` (`.gitignore` done) and write instructions for removing it from history (instructions given 2026-10-21; the user commits, rewrites history and force-pushes)
+- [x] Stop tracking `tests/data/allen_cache/` and remove it from history (the user rewrote the history and force-pushed on 2026-10-21; repository 2 MiB)
 - [x] Package metadata in `pyproject.toml` (description, license, links, classifiers, single-sourced version)
 - [x] Docstrings and type hints for all public functions and non-trivial helpers
 - [x] Examples `examples/01_spikes.ipynb`, `02_sweeps`, `03_sweepsets`, `04_cell_features` and `05_speed_batches_gradients`, executed (they replace `00_basics.ipynb`)
@@ -212,16 +213,26 @@ Goal: Add diagnostics utilities for feature-level introspection and debugging af
 Exit criteria:
 - Diagnostics APIs make parity and regression failures easier to localize and explain, with tested outputs.
 
-## Subgoal 13 - Advanced/burst feature parity
-Goal: Implement burst and other advanced feature logic after core spike/sweep parity is complete.
+## Subgoal 13 - Burst, pause and delay metrics
+Goal: Allen's `burst_metrics`, `pause_metrics` and `delay_metrics` (user request, 2026-10-21: plan, implement, report judgement calls).
 
-- [ ] Add explicit parity/integrity coverage for burst-related features and advanced metrics
-- [ ] Ensure default test fixture order includes at least one burst-positive specimen (active with `--num_specimens 1`)
-- [ ] Add clear skip/guard behavior when burst-positive fixture coverage is unavailable
-- [ ] Implement burst metrics only after user approval at that stage
+Plan: (1) survey the vendored metrics on all cached sweeps; (2) fix vendored bugs
+that keep them from working; (3) record them in the reference; (4) JAX versions in
+`jaxley_ephys/patterns.py` as separate functions named like Allen's methods (they
+are not part of Allen's sweep or cell features); (5) parity tests on the cached
+sweeps plus seeded random spike trains for rare branches.
+
+- [x] Survey: `detect_bursts` raised on every train with burst candidates; pauses on 4 recorded sweeps; delay on all spiking sweeps, but its fit is only meaningful on long squares; the DB's `has_burst`/`has_pause`/`has_delay` are False for all cells (no ground truth)
+- [x] Fix the vendored `detect_bursts` (used-up `zip`, as in ipfx; empty float `out_of_burst`), with regression tests
+- [x] Reference (FORMAT_VERSION 3): burst and pause metrics of every sweep; delay metrics and Allen's double-exponential fit (recorded from `curve_fit`) for long squares
+- [x] `pause_metrics` and `burst_metrics`: exact ports on the `[K]` spike buffers (`lax.while_loop` for the greedy and pruning steps); identical to Allen on every cached sweep and on 300 random trains
+- [x] `delay_metrics`: variable-projection Levenberg-Marquardt fits (single exponential, double exponentials from two starts) summed over 1024-sample chunks of the fit window (cost scales with the window, one compilation per sweep length); Allen's dominance rules
+- [x] Docs: API page, `ALLEN_EPHYS_FIXES.md` (sections 2, 5, 6), README, changelog
+- [x] Tutorial section in `examples/02_sweeps.ipynb`; speeds on the performance page
+- [x] Follow-up (user review, 2026-10-21): vendored fixes, NaN without a fit and comparing the delay on long squares only approved; the metrics also as sweep features behind toggles, `sweep_features(..., bursts=False, pauses=False, delays=False)`; the delay time constant in ms (also in the vendored `delay_metrics`); the delay difference documented in the docstrings, `docs/allen.md`, `ALLEN_EPHYS_FIXES.md` and the tutorial; the untested "differentiable" claim removed from the README, the docs index and the changelog
 
 Exit criteria:
-- Burst/advanced features are validated with deterministic fixtures and clear parity expectations.
+- Burst and pause metrics match Allen exactly; delay metrics match where Allen's fit is well-defined, with the differences documented.
 
 ## Subgoal 14 - Bonus: JAX cell-level features and parity tests
 Goal: Compute cell-level features from sweep/sweepset building blocks after sweepset parity is complete.
@@ -328,7 +339,7 @@ This section is a required workflow contract for implementing JAX features.
     - `1` detour
 - **Implementation sequencing**
   - Core spike, sweep, sweepset and cell features are complete.
-  - Advanced/burst features (Subgoal 13) require explicit user approval.
+  - Burst, pause and delay metrics: Subgoal 13 (requested by the user on 2026-10-21).
 - **Reporting requirement**
   - After feature implementation is complete, produce a thorough report including:
     - implemented features and parity status
@@ -397,3 +408,4 @@ This section is a required workflow contract for implementing JAX features.
 - 2026-10-20: Completed Subgoal 18 (performance on CPU). `benchmarks/run.py` (local, minimal) compares with vendored Allen on the default specimen. Changes: `tau` fit with a noise-tolerant step test, a trust region that grows again, secant curvature (superlinear; 3-10 instead of 5-100 iterations on the cached sweeps) and stops for degenerate fits (line or step, collapsed trust region), which also keeps one ill-posed sweep from holding up a vmapped batch; filter scans unrolled 4x (2x faster); the 1 kHz dV/dt and the `tau`/`sag` fits skipped via `lax.cond` where they cannot matter (sweeps without spikes, non-hyperpolarizing sweeps); `detect_spikes` skips samples more than about 20 ms after `end` when `t` and `end` are concrete (exact to rounding; lengths rounded up to 2^14 samples so similar windows share a compiled shape); host-side checks in NumPy. Measured on a quiet machine (speedup vs vendored Allen, before -> after): long square 0.4x -> 1.1x, short square 0.7x -> 0.7x, ramp 2.1x -> 7.7x, loop over 14 long squares 0.3x -> 1.1x, vmap over them 0.1x -> 0.4x, whole cell 0.9x -> 2.6x (1.7 s); 128 short synthetic traces 2.6x (loop) / 2.3x (vmap). Not met: on CPU `vmap` is not faster than a loop (single-threaded execution; selects instead of skips), and the first call per trace length still compiles for about 2 s per function set (whole cell in a fresh process: 13 s; the JAX compilation cache brings later sessions to about 2.5 s). All 8 specimens pass the sweep, cell and float32 parity tests (one process per specimen, at most 3.9 GB).
 - 2026-10-20: Subgoal 18 follow-up (user request): `detect_spikes(..., t_cutoff=None)` replaces the implicit tail skipping. Samples after `t_cutoff` (default: 20 ms after `end`, the reach of the peak search and of the filter transients) are not analysed; `Spikes.t`, `v`, `i` and `dvdt` keep the input length and are NaN there, so user arrays line up again. The core treats trailing NaN times as outside the sweep (`find_time_index`, `calculate_dvdt`, short-square amplitude), so an explicit `t_cutoff` also works under `jit` (masked) and NaN-padded sweeps of unequal length batch exactly. Default vs whole sweep, explicit cutoff vs a sliced sweep, jit vs eager and NaN-padded vs unpadded all agree exactly (`tests/test_cutoff.py`). `spike_features` and `sweep_features` skip the NaN tail of concrete traces, so the full-length results cost no speed (A/B: 24.7 vs 27.1 ms per long square).
 - 2026-10-21: Subgoal 10 (publication, step 5), all but the git steps the user runs. Package metadata (description, `MIT AND LicenseRef-Allen-Institute-Software-License`, links, classifiers, version from `jaxley_ephys.__version__`); type hints and docstrings for the helpers; examples `01_spikes` to `05_speed_batches_gradients` (executed; they replace `00_basics`); Sphinx docs (`docs/`, `sphinx_book_theme`, `myst_nb` without execution, autosummary API, pages on installation, tutorials, performance, the relation to the AllenSDK and the changelog; build passes with `-W`); `.readthedocs.yaml` (`pip install . --group docs`); concise README; `CHANGELOG.md`; `.gitignore` covers `tests/data/allen_cache/`. Also fixed `tests/test_cutoff.py` for 6 s sweeps (it failed in CI on specimen 525011903) and revised this plan (Subgoals 7, 8 and 14 ticked, 11 dropped, 9/12/13 marked as not scheduled). Default run 251 passed; `--allen` 305 passed, 1 skipped. Known limitations: `vmap` is not faster than a loop on CPU (GPU not tuned); the first call per trace length compiles for about 2 s per set of functions; short squares run at about 0.7x Allen's speed; Allen's burst, pause and delay metrics are not implemented (Subgoal 13); spike times and counts have zero gradients; float32 deviates by about 1e-4; `v_baseline` needs a start time (Allen's flat-interval search is not reproduced).
+- 2026-10-21: Completed Subgoal 13 (burst, pause and delay metrics; user request: plan, implement, report the judgement calls). Survey of the vendored metrics on all cached sweeps: `detect_bursts` raised on every train with burst candidates (31 sweeps), pauses on 4 sweeps, the delay fit is only meaningful on long squares, and the DB's `has_burst`/`has_pause`/`has_delay` are False for every cell. Fixed two vendored `detect_bursts` bugs (used-up `zip`, as in ipfx; empty float `out_of_burst`), with regression tests. New `jaxley_ephys/patterns.py`: `pause_metrics` and `burst_metrics` (exact ports, identical to Allen on every sweep of the 8 specimens and on 300 seeded random trains) and `delay_metrics` (variable-projection Levenberg-Marquardt fits of a single exponential and of double exponentials from two starts, summed over 1024-sample chunks of the window; a double exponential is used only if it is a genuine, better fit; Allen's dominance rules). Delay vs Allen on the 85 spiking long squares: within 2.1e-5 where Allen separated two time constants (25); where Allen stayed at its start (55), the single exponentials agree within 8.1e-5 and the double exponential used on 29 of them fits better (18 within 1% of Allen; 605889373 sweeps 53/55: delay ratios 130/116 instead of 0.97); the 5 sweeps where Allen's fit failed or ran off are not compared. NaN instead of Allen's (0, 0) without a fit. float32: burst and pause within 1e-5 of Allen, delay within 1.6e-3 of float64 (after rejecting fits whose components cancel). Reference format 3. Per long square after compilation: pause 0.2 ms, burst 0.4 ms (2.5-5x faster than Allen), delay about 5 ms median (Allen 9-19 ms); about 1 s compilation per trace length each. `--num_specimens 8`: 1833 passed (and 135 passed for the rerun of the pattern and float32 tests after the last changes); `--allen` 323 passed, 1 skipped. Docs: API page, `ALLEN_EPHYS_FIXES.md` (sections 2, 5, 6), README, changelog, performance page, section in `examples/02_sweeps.ipynb`.

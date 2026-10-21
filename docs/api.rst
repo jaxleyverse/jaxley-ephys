@@ -48,6 +48,17 @@ Sweep features
    jaxley_ephys.sweep.step_amplitude
    jaxley_ephys.sweep.short_step_amplitude
 
+Firing patterns
+---------------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   jaxley_ephys.pause_metrics
+   jaxley_ephys.burst_metrics
+   jaxley_ephys.delay_metrics
+
 Sweepset features
 -----------------
 

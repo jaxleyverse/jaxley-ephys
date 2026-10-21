@@ -14,6 +14,7 @@ from .spikes import (
     spike_features,
 )
 from .sweep import sweep_features
+from .patterns import burst_metrics, delay_metrics, pause_metrics
 from .sweepset import (
     long_square_features,
     ramp_features,
@@ -27,12 +28,15 @@ __all__ = [
     "ISI_DIRECT",
     "ISI_MISSING",
     "Spikes",
+    "burst_metrics",
     "calculate_dvdt",
     "cell_features",
+    "delay_metrics",
     "detect_spikes",
     "extract_cell_features",
     "find_time_index",
     "long_square_features",
+    "pause_metrics",
     "ramp_features",
     "short_square_detection_params",
     "short_square_features",

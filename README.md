@@ -3,8 +3,8 @@
 `jaxley-ephys` computes electrophysiological features of voltage recordings in
 JAX: spike detection and spike, sweep, sweepset and cell features that match the
 AllenSDK feature extraction. It is fast (a whole cell of the Allen Cell Types
-Database takes about 2 s on a CPU, 2.5x faster than the AllenSDK code), compiled,
-batches with `jax.vmap` and is differentiable.
+Database takes about 2 s on a CPU, 2.5x faster than the AllenSDK code), compiled
+and batches with `jax.vmap`.
 
 Documentation: <https://jaxley-ephys.readthedocs.io>
 
@@ -27,6 +27,7 @@ from jaxley_ephys import detect_spikes, extract_cell_features, spike_features, s
 sp = detect_spikes(t, v, i, start=1.02, end=2.02)
 spikes = spike_features(sp)  # Allen's spike table
 features = sweep_features(sp, stimulus="long_square")  # avg_rate, latency, tau, ...
+# bursts=True, pauses=True and delays=True add Allen's burst, pause and delay metrics
 
 # A whole cell: lists of (t, v, i, start, end) per stimulus type
 cell = extract_cell_features(long_squares, short_squares, ramps)

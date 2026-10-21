@@ -413,7 +413,7 @@ class EphysSweepFeatureExtractor:
         Returns
         -------
         delay_ratio : ratio of latency to tau (higher means more delay)
-        tau : dominant time constant of rise before spike
+        tau : dominant time constant of rise before spike (ms)
         """
 
         if len(self._spikes_df) == 0:
@@ -433,7 +433,7 @@ class EphysSweepFeatureExtractor:
         latency = spike_time - start
 
         delay_ratio = latency / tau
-        return delay_ratio, tau
+        return delay_ratio, 1e3 * tau
 
     def _get_baseline_voltage(self):
         v = self.v

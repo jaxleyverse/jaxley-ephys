@@ -12,7 +12,7 @@ Changes relative to original AllenSDK implementation.
 ## 2) Robustness fixes for edge-case sweeps
 - `allen_ephys/ephys_extractor.py`
   - `pause_metrics`: neutral return for no-spike sweeps
-  - `burst_metrics`: neutral return / guarded burst detection failures
+  - `burst_metrics`: neutral return for no-spike sweeps
   - `delay_metrics`: warning-safe and exception-safe prespike fit path
   - long-square rheobase tie-break: when multiple spiking sweeps share the
     minimal stimulus amplitude, select the candidate with highest firing rate
@@ -25,6 +25,17 @@ Changes relative to original AllenSDK implementation.
   - `membrane_time_constant`: avoid `np.nanmean` all-NaN warning by averaging
     only finite `tau` values and returning `nan` when none are finite
 - `allen_ephys/ephys_features.py`
+  - `detect_bursts`: `inout_pairs = list(zip(...))` instead of `zip(...)`. The
+    iterator was used up while scoring the burst candidates, so the function
+    raised (`attempt to get argmin of an empty sequence`) on every spike train
+    with candidates: on 27 long squares and 4 ramps of the cached specimens,
+    where it now finds bursts on 22 sweeps. ipfx fixed it the same way
+    (2026-10-21).
+  - `detect_bursts`: `out_of_burst` is an integer array. With a single burst
+    candidate running to the end of the spike train, its end was appended to an
+    empty float array and slicing with it raised `TypeError` (found by
+    `tests/test_patterns.py`; none of the cached specimens has such a train)
+    (2026-10-21).
   - `fit_membrane_time_constant`: fix RMSE calculation from
     `sqrt(mean(pred - v))` to `sqrt(mean((pred - v)^2))` to avoid invalid
     square-root warnings and to use a mathematically correct RMSE.
@@ -47,6 +58,8 @@ Changes relative to original AllenSDK implementation.
     share the unit of the DB's `avg_isi` (2026-10-19)
   - `tau`: s -> ms (`1e3 / inv_tau`)
   - `membrane_time_constant` docs updated to ms
+  - `delay_metrics`: the time constant s -> ms, like the other time constants
+    (no DB counterpart; the delay ratio is unchanged) (2026-10-21)
 
 ## 4) DB parity mapping convention used in tests
 - `tests/allen_ephys/test_parity.py` (runs with `--allen`)
@@ -83,6 +96,10 @@ Changes relative to original AllenSDK implementation.
   - stimulus amplitude: long squares use `_step_stim_amp`, short squares use
     `_short_step_stim_amp` (set on all short squares, not only the
     common-amplitude ones), ramps have no calculator (`stim_amp = nan`)
+  - burst and pause metrics of every sweep; for long squares also the delay
+    metrics and the double-exponential fit behind them (parameters, SSE and
+    window, recorded by wrapping `curve_fit`). On ramps and short squares the
+    delay is not meaningful (section 6) and its fit is slow (seconds per ramp)
   - cell level: the `EphysCellFeatureExtractor` outputs, the hero sweep, the
     long-square baseline (`extract_cell_features` overrides the extractor's
     `nanmean` with a plain mean over all long squares) and first-spike means of
@@ -113,6 +130,37 @@ jaxley_ephys agrees with this reference to floating-point precision.
   either way, so `tests/test_fuzz.py` does not compare `tau`. jaxley_ephys
   stops such fits once the exponential is indistinguishable from a straight
   line or a step, or its trust region collapses.
+- **Delay metrics (`delay_metrics`, `sweep_features(..., delays=True)`): Allen's
+  optimizer stays at its start.** `fit_prespike_time_constant` fits `y0 + A1 exp(-t/tau1) + A2 exp(-t/tau2)`
+  (`y0` just above the window's maximum) with `curve_fit`, started with both
+  components at the same time constant (from a straight-line fit of
+  `log(y0 - v)`). There the components are interchangeable, and
+  Levenberg-Marquardt mostly keeps them equal, i.e. returns a single
+  exponential. Of the 85 spiking long squares of the cached specimens, Allen
+  separates two time constants on 25 and stays at a single exponential on 55;
+  on 29 of those a separate double exponential fits better. Examples: specimen
+  605889373, sweeps 53 and 55 give 885 and 808 ms (delay ratio about 1), but
+  6.6 and 6.8 ms (ratios 130 and 116) with the double exponential, like
+  Allen's own results on sweeps 56-58 (ratios 77-88). On 4 sweeps `curve_fit`
+  fails and Allen falls back to the straight-line fit; on 1 (605889373,
+  sweep 50) its slower time constant runs off to 27,000 s, a constant offset.
+  jaxley_ephys fits a single exponential and double exponentials from two
+  starts (one component 100x faster than the single exponential, the other at
+  its time constant or 100x slower). It uses the best double exponential with
+  distinct time constants below 100x the window that fits better than the
+  single exponential, else the single exponential, and picks the dominant time
+  constant with Allen's rules. `tests/test_patterns.py` checks:
+  - where Allen separated the components, the delay agrees within 2.1e-5
+    (relative);
+  - where Allen stayed at its start, the single exponentials agree within
+    8.1e-5, and the double exponential used instead always fits better (on 18
+    of the 29 sweeps within 1% of Allen's value).
+- **Delay metrics on ramps and short squares** are not compared: the rise
+  before the first spike is not exponential (the short squares' window starts
+  at the beginning of the recording), and Allen's fit returns time constants
+  from 1e-6 to 1e5 s, or negative ones from its fallback.
+- **Delay metrics without a fit.** Without spikes, or with fewer than 4 samples
+  before the first spike, Allen returns `(0, 0)`; jaxley_ephys returns NaN.
 - **Samples after the analysis window.** `detect_spikes` analyses a sweep up to
   `t_cutoff`, by default 20 ms after `end` (the reach of the peak search and of
   the filter transients, which decay below 1e-20 within it); all features then

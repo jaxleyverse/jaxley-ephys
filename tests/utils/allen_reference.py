@@ -4,8 +4,9 @@ Allen is slow, so its outputs are computed once per cached specimen
 (``uv run python tests/build_reference.py``) and stored as JSON in
 ``tests/testdata/allen_reference/``. For every long-square, short-square and ramp
 sweep the reference holds the analysis window and detection parameters that
-Allen's ``cell_extractor_for_nwb`` uses, the full spike table and all sweep
-features. Per cell it holds the ``EphysCellFeatureExtractor`` outputs, the hero
+Allen's ``cell_extractor_for_nwb`` uses, the full spike table, all sweep
+features and the burst and pause metrics; for long squares also the delay metrics
+and the double-exponential fit behind them. Per cell it holds the ``EphysCellFeatureExtractor`` outputs, the hero
 sweep, baseline and first-spike means of ``extract_cell_features``, Allen's
 adjusted short-square detection parameters, and these cell features under their
 Allen DB names (``record``).
@@ -22,6 +23,7 @@ import hashlib
 import json
 import warnings
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -30,7 +32,7 @@ from tests.utils.allen_dataset import load_specimen_case
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REFERENCE_DIR = REPO_ROOT / "tests" / "testdata" / "allen_reference"
 # Bump when the contents of the reference files change.
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 KINDS = ("long_square", "short_square", "ramp")
 SWEEP_FEATURES = (
     "adapt",
@@ -115,6 +117,12 @@ def _sweep_record(sweep, kind: str) -> dict:
     deflect_v, deflect_index = sweep.sweep_feature("peak_deflect")
     features["peak_deflect"] = float(deflect_v)
     features["peak_deflect_index"] = float(deflect_index)
+    patterns = {
+        "burst": [float(x) for x in sweep.burst_metrics()],
+        "pause": [float(x) for x in sweep.pause_metrics()],
+    }
+    if kind == "long_square":  # delay metrics are meant for (and slow on) others
+        patterns |= _delay_record(sweep)
     return {
         "sweep_number": int(sweep.id),
         "kind": kind,
@@ -126,7 +134,42 @@ def _sweep_record(sweep, kind: str) -> dict:
         "n_spikes": len(df),
         "spikes": {col: df[col].tolist() for col in df.columns} if len(df) else {},
         "features": features,
+        "patterns": patterns,
     }
+
+
+def _delay_record(sweep) -> dict:
+    """Allen's delay metrics and the double-exponential fit behind them: its
+    parameters ``(A1, tau1, A2, tau2)``, SSE, and the fit window's length and first
+    sample interval (s). ``delay_fit`` is None without a fit and ``"failed"`` where
+    ``curve_fit`` failed and Allen fell back to a straight-line fit of log(y0 - v).
+    """
+    import scipy.optimize
+
+    from allen_ephys import ephys_features as ft
+
+    fits = []
+
+    def recording_curve_fit(f, x, y, **kwargs):
+        try:
+            params, cov = scipy.optimize.curve_fit(f, x, y, **kwargs)
+        except RuntimeError:
+            fits.append("failed")
+            raise
+        sse = float(np.sum((f(x, *params) - y) ** 2))
+        fits.append(
+            {
+                "params": params.tolist(),
+                "sse": sse,
+                "span": float(x[-1]),
+                "first": float(x[1]),
+            }
+        )
+        return params, cov
+
+    with mock.patch.object(ft, "curve_fit", recording_curve_fit):
+        delay = sweep.delay_metrics()
+    return {"delay": [float(x) for x in delay], "delay_fit": fits[0] if fits else None}
 
 
 def _mean_spike_0(sweeps) -> dict[str, float]:

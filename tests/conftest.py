@@ -103,6 +103,7 @@ def results(specimen_id, reference, sweeps) -> dict[str, list[dict]]:
                 stimulus=kind,
                 dv_cutoff=s.dv_cutoff,
                 thresh_frac=s.thresh_frac,
+                delay=kind == "long_square",
             )
             for s in sweeps[kind]
         ]
