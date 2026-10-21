@@ -22,7 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from ._ops import masked_mean, take
+from ._ops import fill_nan, masked_mean, take
 from .dvdt import calculate_dvdt
 from .spikes import AUTO_MAX_SPIKES, _putative_upstrokes
 
@@ -58,11 +58,35 @@ def _valid(sweeps: Features, valid: Array | None) -> Array:
 
 
 def _line_slope(x: Array, y: Array, mask: Array) -> Array:
-    """Least-squares slope of ``y`` over ``x`` where ``mask``
-    (Allen fits a line with ``np.linalg.lstsq``)."""
+    """Least-squares slope of ``y`` over ``x`` where ``mask`` (Allen fits a line
+    with ``np.linalg.lstsq``); NaN without spread in ``x``."""
     x_mean, y_mean = masked_mean(x, mask), masked_mean(y, mask)
     dx = jnp.where(mask, x - x_mean, 0.0)
-    return jnp.sum(dx * jnp.where(mask, y - y_mean, 0.0)) / jnp.sum(dx * dx)
+    spread = jnp.sum(dx * dx)
+    ok = spread > 0  # dividing only then keeps gradients finite
+    slope = jnp.sum(dx * jnp.where(mask, y - y_mean, 0.0)) / jnp.where(ok, spread, 1.0)
+    return jnp.where(ok, slope, jnp.nan)
+
+
+# Rate scale of the soft spike presence behind the rheobase's gradient (1/s): one
+# spike in a 1 s long square.
+_PRESENCE_SCALE = 1.0
+
+
+def _soft_rheobase(amp: Array, rate: Array, valid: Array) -> Array:
+    """Amplitude of the first spiking sweep in order of amplitude, from spike
+    presences ``1 - exp(-rate * 1 s)`` whose values are exactly 0 or 1 and whose
+    gradients are those of the soft spike counts in ``rate``. The gradient path of
+    the rheobase: e.g. a lower sweep that starts spiking lowers it."""
+    ok = valid & jnp.isfinite(amp) & jnp.isfinite(rate)
+    smooth = 1.0 - jnp.exp(-jnp.where(ok, rate, 0.0) * _PRESENCE_SCALE)
+    present = (
+        jnp.where(ok & (rate > 0), 1.0, 0.0) + smooth - jax.lax.stop_gradient(smooth)
+    )
+    order = jnp.argsort(jnp.where(ok, amp, jnp.inf), stable=True)
+    p = present[order]
+    none_before = jnp.concatenate([jnp.ones(1, p.dtype), jnp.cumprod(1.0 - p)[:-1]])
+    return jnp.sum(jnp.where(ok, amp, 0.0)[order] * p * none_before)
 
 
 def _pick(values: Features, index: Array) -> Features:
@@ -91,6 +115,8 @@ def long_square_features(
     first_spikes: Features,
     valid: Array | None = None,
     subthresh_min_amp: float = SUBTHRESHOLD_MIN_AMP,
+    *,
+    nan_to: float | None = None,
 ) -> Features:
     """Long-square features (Allen's ``_analyze_long_squares`` plus the hero sweep
     and baseline of ``extract_cell_features``).
@@ -114,6 +140,9 @@ def long_square_features(
     - ``hero_index``, ``hero_sweep``: the spiking sweep with the lowest amplitude
       in (rheobase + 39, rheobase + 61) pA and its sweep features;
     - ``[S]`` masks ``spiking``, ``subthreshold`` and ``membrane_property``.
+
+    ``nan_to`` replaces NaN values in the result by the given value (e.g. ``0.0``
+    in a loss for gradient-based fitting); ``None`` (the default) keeps NaN.
     """
     valid = _valid(sweeps, valid)
     amp, rate = sweeps["stim_amp"], sweeps["avg_rate"]
@@ -125,7 +154,9 @@ def long_square_features(
     max_rate = jnp.max(jnp.where(candidate & ~jnp.isnan(rate), rate, -jnp.inf))
     fastest = candidate & jnp.isclose(rate, max_rate)
     rheobase = _first_index(jnp.where(jnp.sum(candidate) == 1, candidate, fastest))
-    rheobase_i = take(amp, rheobase)
+    # Allen's rheobase, with the gradient of a soft one (see _soft_rheobase).
+    soft = _soft_rheobase(amp, rate, valid)
+    rheobase_i = take(amp, rheobase) + soft - jax.lax.stop_gradient(soft)
 
     spiking = valid & (rate > 0)
     fi_fit_slope = jnp.where(
@@ -152,7 +183,7 @@ def long_square_features(
     lo, hi = rheobase_i + HERO_AMP_OFFSETS[0], rheobase_i + HERO_AMP_OFFSETS[1]
     hero_ok = spiking & (amp > lo) & (amp < hi)
     hero = jnp.where(jnp.any(hero_ok), jnp.argmin(jnp.where(hero_ok, amp, jnp.inf)), -1)
-    return {
+    out = {
         "rheobase_index": rheobase,
         "rheobase_i": rheobase_i,
         "rheobase_spike": _pick(first_spikes, rheobase),
@@ -168,10 +199,15 @@ def long_square_features(
         "subthreshold": subthreshold,
         "membrane_property": membrane,
     }
+    return fill_nan(out, nan_to)
 
 
 def short_square_features(
-    sweeps: Features, first_spikes: Features, valid: Array | None = None
+    sweeps: Features,
+    first_spikes: Features,
+    valid: Array | None = None,
+    *,
+    nan_to: float | None = None,
 ) -> Features:
     """Short-square features (Allen's ``_analyze_short_squares``).
 
@@ -180,6 +216,9 @@ def short_square_features(
     (``stimulus_amplitude``, pA; ties: the lowest), the ``[S]`` mask of the
     spiking sweeps at that amplitude (``common_amp``) and their mean first-spike
     features (``mean_spike_0``).
+
+    ``nan_to`` replaces NaN values in the result by the given value (e.g. ``0.0``
+    in a loss for gradient-based fitting); ``None`` (the default) keeps NaN.
     """
     valid = _valid(sweeps, valid)
     amp = sweeps["stim_amp"]
@@ -188,20 +227,30 @@ def short_square_features(
     count = jnp.where(spiking, count, 0)
     common = jnp.min(jnp.where(spiking & (count == jnp.max(count)), amp, jnp.inf))
     common_amp = spiking & (amp == common)
-    return {
+    out = {
         "stimulus_amplitude": jnp.where(jnp.any(spiking), common, jnp.nan),
         "common_amp": common_amp,
         "mean_spike_0": mean_first_spike(first_spikes, common_amp),
     }
+    return fill_nan(out, nan_to)
 
 
 def ramp_features(
-    sweeps: Features, first_spikes: Features, valid: Array | None = None
+    sweeps: Features,
+    first_spikes: Features,
+    valid: Array | None = None,
+    *,
+    nan_to: float | None = None,
 ) -> Features:
     """Ramp features: the ``[S]`` mask of spiking ramps (``spiking``) and their
-    mean first-spike features (``mean_spike_0``)."""
+    mean first-spike features (``mean_spike_0``).
+
+    ``nan_to`` replaces NaN values in the result by the given value (e.g. ``0.0``
+    in a loss for gradient-based fitting); ``None`` (the default) keeps NaN.
+    """
     spiking = _valid(sweeps, valid) & (sweeps["avg_rate"] > 0)
-    return {"spiking": spiking, "mean_spike_0": mean_first_spike(first_spikes, spiking)}
+    out = {"spiking": spiking, "mean_spike_0": mean_first_spike(first_spikes, spiking)}
+    return fill_nan(out, nan_to)
 
 
 @partial(jax.jit, static_argnames=("filter",))

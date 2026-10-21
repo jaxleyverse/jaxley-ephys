@@ -176,6 +176,9 @@ def _spikes(thr, codes, fast, slow, v) -> Spikes:
         isi_type=buffer(codes, ISI_MISSING),
         clipped=buffer(np.zeros(n, bool), False),
         overflow=jnp.asarray(False),
+        thresh_frac=jnp.asarray(0.05),
+        min_peak=jnp.asarray(-30.0),
+        count_width=jnp.asarray(5.0),
     )
 
 

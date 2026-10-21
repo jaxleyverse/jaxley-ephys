@@ -14,8 +14,24 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array, lax
 
-from ._ops import masked_mean, next_true, prev_true, shift_left, shift_right, take
-from .spikes import ISI_DETOUR, ISI_DIRECT, ISI_MISSING, Spikes, find_time_index
+from ._ops import (
+    masked_mean,
+    next_true,
+    prev_true,
+    root_tangent_solve,
+    shift_left,
+    shift_right,
+    small_solve,
+    take,
+)
+from .spikes import (
+    ISI_DETOUR,
+    ISI_DIRECT,
+    ISI_MISSING,
+    Spikes,
+    _spike_times,
+    find_time_index,
+)
 
 # ISI types set during burst detection, besides ISI_DIRECT and ISI_DETOUR.
 _PAUSELIKE, _MIDBURST = 2, 3
@@ -32,7 +48,7 @@ _CHUNK = 1024
 def _spike_train(sp: Spikes) -> tuple[Array, Array, Array]:
     """``[K - 1]`` interspike intervals (s) between consecutive thresholds, their
     mask and the ISI type of the spike before each interval."""
-    thr_t = take(sp.t, sp.threshold)
+    thr_t = _spike_times(sp, "threshold")
     valid = sp.valid[1:]
     isi = jnp.where(valid, thr_t[1:] - thr_t[:-1], jnp.nan)
     return isi, valid, jnp.where(valid, sp.isi_type[:-1], ISI_MISSING)
@@ -59,6 +75,7 @@ def _detect_pauses(isi: Array, valid: Array, types: Array, cost_weight: Array) -
     times a cost that grows as they approach the other ISIs' mean. No pauses if
     the net benefit never becomes positive.
     """
+    isi = lax.stop_gradient(isi)  # a decision: no gradient through the search
     m = isi.shape[0]
     idx = jnp.arange(m)
     direct, detour = types == ISI_DIRECT, types == ISI_DETOUR
@@ -112,13 +129,17 @@ def _burstiness(min_in: Array, min_out: Array) -> Array:
 def _detect_bursts(sp: Spikes, tol: Array, pause_cost: Array) -> tuple[Array, Array]:
     """Allen's ``detect_bursts``: ``[K - 1]`` mask of the ISIs that start a burst
     and the burstiness index of each burst."""
-    isi, valid, types = _spike_train(sp)
+    intervals, valid, types = _spike_train(sp)
+    # Which ISIs form bursts is decided without gradients (the search loops cannot
+    # be differentiated); the burstiness index then uses the intervals themselves.
+    isi = lax.stop_gradient(intervals)
     m = isi.shape[0]
     idx = jnp.arange(m)
     n_isi = jnp.sum(valid)
-    fast_t = take(sp.t, sp.fast_trough)[:-1]
-    slow_t, slow_v = take(sp.t, sp.slow_trough)[:-1], take(sp.v, sp.slow_trough)[:-1]
-    thr_v = take(sp.v, sp.threshold)[:-1]
+    fast_t = lax.stop_gradient(_spike_times(sp, "fast_trough"))[:-1]
+    slow_t = lax.stop_gradient(_spike_times(sp, "slow_trough"))[:-1]
+    slow_v = lax.stop_gradient(take(sp.v, sp.slow_trough))[:-1]
+    thr_v = lax.stop_gradient(take(sp.v, sp.threshold))[:-1]
 
     # Burst boundaries cannot be at pauses, and bursts need direct and detour ISIs.
     types = jnp.where(_detect_pauses(isi, valid, types, pause_cost), _PAUSELIKE, types)
@@ -188,14 +209,19 @@ def _detect_bursts(sp: Spikes, tol: Array, pause_cost: Array) -> tuple[Array, Ar
     # Each burst is compared with the ISIs up to the next burst; the last one with
     # the ISIs after it, or before it if it ends the spike train.
     owner, inside = in_burst(bursts)
-    min_in = jax.ops.segment_min(isi, jnp.where(inside, owner, m), m)
+    min_in = jax.ops.segment_min(intervals, jnp.where(inside, owner, m), m)
     gap = jnp.cumsum(bursts)  # outside bursts: 0 before the first one, 1 after it, ...
-    gap_min = jax.ops.segment_min(isi, jnp.where(valid & ~inside, gap, m + 1), m + 1)
+    rest = jnp.where(valid & ~inside, gap, m + 1)
+    gap_min = jax.ops.segment_min(intervals, rest, m + 1)
     rank = gap - 1
     last = rank == jnp.sum(bursts) - 1
     after, before = gap_min[jnp.minimum(rank + 1, m)], gap_min[jnp.maximum(rank, 0)]
     min_out = jnp.where(~last | (end < n_isi), after, before)
-    return bursts, jnp.where(bursts, _burstiness(min_in, min_out), jnp.nan)
+    # Only bursts have both minima; the others get placeholders before dividing,
+    # which keeps gradients finite.
+    ok = bursts & jnp.isfinite(min_in) & jnp.isfinite(min_out)
+    index = _burstiness(jnp.where(ok, min_in, 1.0), jnp.where(ok, min_out, 1.0))
+    return bursts, jnp.where(bursts, jnp.where(ok, index, jnp.nan), jnp.nan)
 
 
 @jax.jit
@@ -216,15 +242,6 @@ def burst_metrics(
     return jnp.where(n > 0, largest, 0.0), n
 
 
-def _solve(a: Array, b: Array) -> Array:
-    """``a^-1 @ b`` for a 1x1 or 2x2 matrix ``a``."""
-    if a.shape[0] == 1:
-        return b / a[0, 0]
-    det = a[0, 0] * a[1, 1] - a[0, 1] * a[1, 0]
-    inv = jnp.stack([jnp.stack([a[1, 1], -a[0, 1]]), jnp.stack([-a[1, 0], a[0, 0]])])
-    return inv @ b / det
-
-
 def _window_reduce(fn, t: Array, v: Array, lo: Array, hi: Array, init, combine=jnp.add):
     """Combine ``fn(t, v, inside)`` over chunks of the window ``[lo, hi)`` of the
     traces; ``fn`` gets one chunk of each and its mask of window samples."""
@@ -242,29 +259,53 @@ def _window_reduce(fn, t: Array, v: Array, lo: Array, hi: Array, init, combine=j
     return lax.fori_loop(lo // chunk, (hi - 1) // chunk + 1, add, init)
 
 
-def _window_sums(k: Array, window: tuple) -> tuple[Array, ...]:
+def _exp_terms(
+    t: Array, v: Array, inside: Array, k: Array, t0: Array, y0: Array
+) -> tuple[Array, ...]:
     """``e^T e``, ``e^T d``, ``(x e)^T e``, ``(x e)^T d`` and ``(x e)^T (x e)`` over
-    the fit window, with ``e[:, j] = exp(-k[j] * x)``, ``x = t - t[lo]`` and
+    the samples ``inside``, with ``e[j] = exp(-k[j] * x)``, ``x = t - t0`` and
     ``d = v - y0``."""
+    # Samples on the last axis: reductions along it vectorize best on CPU.
+    x = jnp.where(inside, t - t0, 0.0)
+    d = jnp.where(inside, v - y0, 0.0)
+    e = jnp.where(inside, jnp.exp(-k[:, None] * x), 0.0)
+    ee = e[:, None, :] * e[None, :, :]
+    return (
+        ee.sum(-1),
+        (e * d).sum(-1),
+        (x * ee).sum(-1),
+        (x * e * d).sum(-1),
+        (x * x * ee).sum(-1),
+    )
+
+
+def _window_sums(k: Array, window: tuple) -> tuple[Array, ...]:
+    """``_exp_terms`` over the fit window, summed chunk by chunk."""
     t, v, lo, hi, y0, _ = window
 
-    def chunk_sums(t_c, v_c, inside):
-        # Samples on the last axis: reductions along it vectorize best on CPU.
-        x = jnp.where(inside, t_c - t[lo], 0.0)
-        d = jnp.where(inside, v_c - y0, 0.0)
-        e = jnp.where(inside, jnp.exp(-k[:, None] * x), 0.0)
-        ee = e[:, None, :] * e[None, :, :]
-        return (
-            ee.sum(-1),
-            (e * d).sum(-1),
-            (x * ee).sum(-1),
-            (x * e * d).sum(-1),
-            (x * x * ee).sum(-1),
-        )
+    def chunk_terms(t_c, v_c, inside):
+        return _exp_terms(t_c, v_c, inside, k, t[lo], y0)
 
     p = k.shape[0]
     square, vector = jnp.zeros((p, p), t.dtype), jnp.zeros(p, t.dtype)
-    return _window_reduce(chunk_sums, t, v, lo, hi, (square, vector) * 2 + (square,))
+    return _window_reduce(chunk_terms, t, v, lo, hi, (square, vector) * 2 + (square,))
+
+
+def _optimality(log_k: Array, t: Array, v: Array, lo: Array, hi: Array) -> Array:
+    """Optimality condition of ``_fit_exps``: the gradient of the SSE in ``log(k)``
+    (variable projection). Computed from masked sums over the whole trace, unlike
+    the chunked sums of the search, so that it can be differentiated in reverse
+    mode; it is only evaluated for derivatives."""
+    idx = jnp.arange(t.shape[0])
+    inside = (idx >= lo) & (idx < hi)
+    y0 = jnp.max(jnp.where(inside, v, -jnp.inf)) + 5e-6
+    k = jnp.exp(log_k)
+    gram, ed, xee, xed, _ = _exp_terms(t, v, inside, k, t[lo], y0)
+    # Merged rates make the amplitudes singular: such fits are not used, but their
+    # gradients must stay finite.
+    singular = jnp.linalg.det(gram) == 0
+    a = small_solve(jnp.where(singular, jnp.eye(k.shape[0], dtype=t.dtype), gram), ed)
+    return a * k * (xed - xee @ a)
 
 
 def _exp_sums(log_k: Array, window: tuple) -> tuple[Array, Array, Array, Array]:
@@ -274,9 +315,9 @@ def _exp_sums(log_k: Array, window: tuple) -> tuple[Array, Array, Array, Array]:
     out (Kaufman's variable projection)."""
     k = jnp.exp(log_k)
     gram, ed, xee, xed, xexe = _window_sums(k, window)
-    a = _solve(gram, ed)
+    a = small_solve(gram, ed)
     ak = a * k
-    curvature = jnp.outer(ak, ak) * (xexe - xee @ _solve(gram, xee))
+    curvature = jnp.outer(ak, ak) * (xexe - xee @ small_solve(gram, xee))
     return window[-1] - ed @ a, a, ak * (xed - xee @ a), curvature
 
 
@@ -291,19 +332,20 @@ def _fit_exps(log_k: Array, window: tuple, max_iters: int = 200):
     ``status`` is ``_CONVERGED``, ``_RUNNING`` (``max_iters`` reached) or
     ``_DEGENERATE``: two rates merged or a rate ran off towards a constant
     (``k * span < 1e-6``) or a step at the first sample, where the fit has no
-    least-squares optimum.
+    least-squares optimum. The search is not differentiated: gradients of the
+    rates follow from the optimality condition (implicit differentiation,
+    ``lax.custom_root``).
     """
-    t, _, lo, hi, *_ = window
+    t, v, lo, hi, *_ = window
     span, first = t[hi - 1] - t[lo], t[lo + 1] - t[lo]
     eps = jnp.finfo(t.dtype).eps
     # Rates to ~1e-6 (Allen's optimizer stops at ~1e-5), or the SSE no longer drops.
     step_tol, sse_tol = jnp.maximum(1e-6, jnp.sqrt(eps)), jnp.maximum(1e-12, eps)
-    sse, a, grad, curvature = _exp_sums(log_k, window)
 
     def step(state):
         it, log_k, sse, a, grad, curvature, damping, _ = state
         damped = curvature + damping * jnp.diag(jnp.diag(curvature))
-        delta = jnp.clip(-_solve(damped, grad), -2.0, 2.0)
+        delta = jnp.clip(-small_solve(damped, grad), -2.0, 2.0)
         new = _exp_sums(log_k + delta, window)
         accept = new[0] <= sse
         done = accept & (
@@ -326,10 +368,20 @@ def _fit_exps(log_k: Array, window: tuple, max_iters: int = 200):
         it, *_, status = state
         return (it < max_iters) & (status == _RUNNING)
 
-    damping = jnp.asarray(1e-3, t.dtype)
-    init = (0, log_k, sse, a, grad, curvature, damping, _RUNNING)
-    _, log_k, sse, a, *_, status = lax.while_loop(keep_going, step, init)
-    return log_k, a, sse, status
+    def search(_, log_k):
+        damping = jnp.asarray(1e-3, t.dtype)
+        init = (0, log_k, *_exp_sums(log_k, window), damping, _RUNNING)
+        _, log_k, sse, a, *_, status = lax.while_loop(keep_going, step, init)
+        # As a float: custom_root mishandles integer auxiliary outputs.
+        return log_k, (a, sse, status.astype(t.dtype))
+
+    def optimality(log_k):
+        return _optimality(log_k, t, v, lo, hi)
+
+    log_k, (a, sse, status) = lax.custom_root(
+        optimality, log_k, search, root_tangent_solve, has_aux=True
+    )
+    return log_k, a, sse, status.astype(int)
 
 
 def _dominant_tau(tau: Array, a: Array, tau_limit: Array) -> Array:
@@ -458,5 +510,8 @@ def delay_metrics(sp: Spikes, tau_limit: float = 0.3) -> tuple[Array, Array]:
     agree. See ``allen_ephys/ALLEN_EPHYS_FIXES.md``, section 6.
     """
     tau = _delay_fit(sp, tau_limit)[0]
-    latency = take(sp.t, sp.threshold[0]) - sp.start
-    return latency / tau, 1e3 * tau
+    latency = _spike_times(sp, "threshold")[0] - sp.start
+    # NaN without a fit; the guard keeps gradients finite.
+    fits = jnp.isfinite(tau)
+    tau = jnp.where(fits, tau, 1.0)
+    return jnp.where(fits, latency / tau, jnp.nan), jnp.where(fits, 1e3 * tau, jnp.nan)

@@ -24,6 +24,14 @@ First release.
 - Compiled once per trace length, batches with `jax.vmap` (also of sweeps of
   unequal length, padded with NaN times); float32 within about 1e-4 of Allen;
   `t_cutoff` skips samples after the analysis window.
+- Gradients of every feature (`jax.grad`), finite also where features are NaN:
+  exact for voltages and the fits (implicit differentiation of `tau` and the
+  delay), of times between samples for event times and what is computed from
+  them, of soft spike counts for `avg_rate`, the f-I slope and the rheobase; the
+  values stay Allen's. `detect_spikes(..., interpolate=True)` returns the times
+  between samples as values, `count_width` sets the reach of the soft counts, and
+  `nan_to` replaces NaN features for losses. Example: fitting a Hodgkin-Huxley
+  model to features (`examples/06_fitting.ipynb`).
 - `allen_ephys`: a maintained copy of the AllenSDK feature extraction
   (`jaxley-ephys[allen]`), with fixes such as for `detect_bursts`, which raised
   on every spike train with burst candidates.

@@ -6,6 +6,9 @@ valid entries are packed at the front, missing entries are -1 (indices) or NaN
 peak to the next threshold). Here such windows are disjoint and ordered, so
 each sample is labelled with the window containing it ("segments") and all
 spikes are handled in one pass over the trace: O(T + K) instead of O(T * K).
+
+Also: small linear solves for the exponential fits, the tangent solve that
+differentiates them implicitly, and NaN filling for the ``nan_to`` keywords.
 """
 
 from __future__ import annotations
@@ -128,3 +131,45 @@ def masked_mean(values: Array, mask: Array) -> Array:
     n = jnp.sum(mask)
     total = jnp.sum(jnp.where(mask, values, 0.0))
     return jnp.where(n > 0, total / jnp.maximum(n, 1), jnp.nan)
+
+
+def small_solve(a: Array, b: Array) -> Array:
+    """``a^-1 @ b`` for a 1x1 or 2x2 matrix ``a`` (explicitly; faster than LU)."""
+    if a.shape[0] == 1:
+        return b / a[0, 0]
+    det = a[0, 0] * a[1, 1] - a[0, 1] * a[1, 0]
+    inv = jnp.stack([jnp.stack([a[1, 1], -a[0, 1]]), jnp.stack([-a[1, 0], a[0, 0]])])
+    return inv @ b / det
+
+
+def root_tangent_solve(g, y: Array) -> Array:
+    """``tangent_solve`` of ``lax.custom_root`` for one or two unknowns: solves the
+    linear system ``g(x) = y``, giving zero where it is singular or not finite
+    (degenerate fits: their results are not used, but must not make gradients
+    NaN)."""
+    if y.ndim == 0:
+        slope = g(jnp.ones_like(y))
+        ok = jnp.isfinite(slope) & (slope != 0)
+        return jnp.where(ok, y / jnp.where(ok, slope, 1.0), 0.0)
+    eye = jnp.eye(y.shape[0], dtype=y.dtype)
+    jac = jnp.stack([g(e) for e in eye], axis=1)
+    det = (
+        jac[0, 0] if y.shape[0] == 1 else jac[0, 0] * jac[1, 1] - jac[0, 1] * jac[1, 0]
+    )
+    ok = jnp.all(jnp.isfinite(jac)) & (det != 0)
+    return jnp.where(ok, small_solve(jnp.where(ok, jac, eye), y), 0.0)
+
+
+def fill_nan(tree, value: float | None):
+    """``tree`` with the NaN entries of its float arrays replaced by ``value``
+    (unchanged if ``value`` is None); gradients pass through the other entries."""
+    if value is None:
+        return tree
+
+    def fill(x):
+        x = jnp.asarray(x)
+        if not jnp.issubdtype(x.dtype, jnp.floating):
+            return x
+        return jnp.where(jnp.isnan(x), jnp.asarray(value, x.dtype), x)
+
+    return jax.tree.map(fill, tree)

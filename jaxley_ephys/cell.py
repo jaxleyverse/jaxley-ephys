@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
+from ._ops import fill_nan
 from .spikes import detect_spikes, spike_features
 from .sweep import sweep_features
 from .sweepset import (
@@ -56,6 +57,8 @@ def cell_features(
     long_squares: Features,
     short_squares: Features | None = None,
     ramps: Features | None = None,
+    *,
+    nan_to: float | None = None,
 ) -> dict[str, Array]:
     """Cell features with Allen Cell Types Database names from sweepset features.
 
@@ -72,6 +75,9 @@ def cell_features(
 
     The database's sweep ids (``rheobase_sweep_id``, ``thumbnail_sweep_id``)
     correspond to ``rheobase_index`` and ``hero_index`` of the long squares.
+
+    ``nan_to`` replaces NaN values in the result by the given value (e.g. ``0.0``
+    in a loss for gradient-based fitting); ``None`` (the default) keeps NaN.
     """
     hero = long_squares["hero_sweep"]
     out = {
@@ -94,7 +100,7 @@ def cell_features(
         means = {} if features is None else features["mean_spike_0"]
         for name in SPIKE_FEATURES:
             out[f"{name}_{suffix}"] = means.get(name, nan)
-    return out
+    return fill_nan(out, nan_to)
 
 
 def _stack(dicts: list[dict]) -> dict:
@@ -118,6 +124,7 @@ def extract_cell_features(
     *,
     subthresh_min_amp: float = SUBTHRESHOLD_MIN_AMP,
     short_square_window: tuple[float, float] = SHORT_SQUARE_WINDOW,
+    nan_to: float | None = None,
 ) -> dict[str, Features]:
     """Spike, sweep, sweepset and cell features of one cell.
 
@@ -136,7 +143,10 @@ def extract_cell_features(
       squares also hold the ``dv_cutoff`` and ``thresh_frac`` used;
     - ``cell``: the output of ``cell_features``.
 
-    Runs eagerly (one compiled detection per sweep length).
+    Runs eagerly (one compiled detection per sweep length). ``nan_to`` replaces
+    NaN values in the result by the given value (e.g. ``0.0`` in a loss for
+    gradient-based fitting); the cell features are still computed from the
+    NaN-aware sweep features. ``None`` (the default) keeps NaN.
     """
     if not long_squares:
         raise ValueError("extract_cell_features needs at least one long square")
@@ -169,4 +179,4 @@ def extract_cell_features(
             "first_spikes": first,
         }
     out["cell"] = cell_features(out["long_squares"], out["short_squares"], out["ramps"])
-    return out
+    return fill_nan(out, nan_to)

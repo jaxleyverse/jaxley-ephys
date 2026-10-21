@@ -148,5 +148,8 @@ def calculate_dvdt(
         filtered = jnp.where((wn >= 0) & (wn < 1), filtered, jnp.nan)
         v = jnp.where(evenly_sampled, filtered, v)
     dt = jnp.where(evenly_sampled & inside, step, dt)
-    dvdt = jnp.where(dt != 0, 1e-3 * jnp.diff(v) / jnp.where(dt != 0, dt, 1.0), jnp.nan)
+    # NaN where dt is 0 or NaN (after the sweep); dividing only by valid intervals
+    # also keeps gradients finite there.
+    ok = jnp.isfinite(dt) & (dt != 0)
+    dvdt = jnp.where(ok, 1e-3 * jnp.diff(v) / jnp.where(ok, dt, 1.0), jnp.nan)
     return jnp.concatenate([dvdt, jnp.full((1,), jnp.nan, dtype=dvdt.dtype)])

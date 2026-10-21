@@ -5,7 +5,7 @@ spike detection and spike, sweep, sweepset and cell features that match the
 [AllenSDK](https://github.com/AllenInstitute/AllenSDK) feature extraction behind the
 [Allen Cell Types Database](https://celltypes.brain-map.org). Everything is
 compiled, so it is fast, works on batches with `jax.vmap` and can be differentiated
-with `jax.grad`.
+with `jax.grad` (see [](gradients.md)).
 
 ```python
 import jax
@@ -26,8 +26,8 @@ features = sweep_features(sp, stimulus="long_square")  # avg_rate, latency, tau,
   (see [](allen.md)).
 - **Fast:** about 2.5 times faster than the AllenSDK code for a whole cell on a
   CPU, more for long recordings.
-- **JAX:** compiled once per trace length, batched with `jax.vmap`, and in float32
-  within about 1e-4 of Allen.
+- **JAX:** compiled once per trace length, batched with `jax.vmap`, every feature
+  differentiable (tested), and in float32 within about 1e-4 of Allen.
 
 ```{toctree}
 :hidden:
@@ -36,6 +36,7 @@ features = sweep_features(sp, stimulus="long_square")  # avg_rate, latency, tau,
 installation
 tutorials
 performance
+gradients
 ```
 
 ```{toctree}

@@ -8,7 +8,7 @@ NaN (values). Batches of equal-length sweeps work with ``jax.vmap``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 
 import jax
@@ -18,6 +18,7 @@ from jax import Array, lax
 
 from ._ops import (
     compact,
+    fill_nan,
     masked_mean,
     next_true,
     prev_true,
@@ -52,7 +53,12 @@ class Spikes:
     and slow trough (-1 where missing), its ``isi_type`` code and whether it is
     ``clipped`` by the end of the window. ``overflow`` is set if there were more
     than K putative spikes (upward crossings of ``dv_cutoff``); the buffers are
-    then incomplete. Spikes of a batch (``jax.vmap``) have a leading batch axis.
+    then incomplete. ``thresh_frac`` is the detection parameter that defines the
+    thresholds, needed for their times between samples; with ``interpolate``,
+    features use these times instead of Allen's sample times. ``min_peak`` and
+    ``count_width`` define the soft spike count behind the gradients of counts
+    (see ``detect_spikes``). Spikes of a batch (``jax.vmap``) have a leading batch
+    axis.
     """
 
     t: Array
@@ -72,6 +78,10 @@ class Spikes:
     isi_type: Array
     clipped: Array
     overflow: Array
+    thresh_frac: Array
+    min_peak: Array
+    count_width: Array
+    interpolate: bool = field(default=False, metadata={"static": True})
 
     @property
     def valid(self) -> Array:
@@ -285,7 +295,7 @@ def _trough_details(
     return fast, adp, slow, isi_type, clipped | (ok & ~has_fast)
 
 
-@partial(jax.jit, static_argnames=("filter", "max_spikes"))
+@partial(jax.jit, static_argnames=("filter", "max_spikes", "interpolate"))
 def _detect_spikes(
     t: Array,
     v: Array,
@@ -301,6 +311,8 @@ def _detect_spikes(
     thresh_frac: Array,
     t_cutoff: Array,
     max_spikes: int,
+    interpolate: bool,
+    count_width: Array,
 ) -> Spikes:
     """The compiled part of ``detect_spikes`` (same arguments)."""
     # Compute in the default float precision (float64 if ``jax_enable_x64`` is set).
@@ -376,6 +388,10 @@ def _detect_spikes(
         isi_type=isi_type,
         clipped=clipped & (thr >= 0),
         overflow=overflow,
+        thresh_frac=jnp.asarray(thresh_frac, t.dtype),
+        min_peak=jnp.asarray(min_peak, t.dtype),
+        count_width=jnp.asarray(count_width, t.dtype),
+        interpolate=interpolate,
     )
 
 
@@ -505,6 +521,8 @@ def detect_spikes(
     thresh_frac: float | Array = 0.05,
     t_cutoff: float | Array | None = None,
     max_spikes: int | None = 256,
+    interpolate: bool = False,
+    count_width: float | Array = 5.0,
 ) -> Spikes:
     """Detect spikes like Allen's ``EphysSweepFeatureExtractor.process_spikes``.
 
@@ -532,6 +550,16 @@ def detect_spikes(
             upward crossing of ``dv_cutoff`` in the window (the putative spikes,
             before they are merged and filtered). ``None`` starts at 256 and grows
             K 4x until they fit; this needs concrete (non-traced) inputs.
+        interpolate: Event times (thresholds, peaks, troughs, ...) between
+            samples: where the defining level is crossed (linear interpolation)
+            or at the vertex of a parabola through the extremum. They change
+            smoothly with ``v``, within a sample of Allen's. ``False`` (the
+            default) keeps Allen's sample times; their gradients are still those
+            of the interpolated times. All features of the ``Spikes`` use them.
+        count_width: Width (mV) of the sigmoid in the soft spike count that
+            gives spike counts (``avg_rate`` and the f-I slope) their gradients:
+            the number of upward crossings of ``min_peak``, counted smoothly.
+            Wider reaches models further from spiking; it never changes values.
 
     Returns:
         ``Spikes`` with ``[K]`` buffers. If K is too small, a ``ValueError`` is
@@ -584,6 +612,8 @@ def detect_spikes(
         min_peak=min_peak,
         thresh_frac=thresh_frac,
         t_cutoff=jnp.inf if t_cutoff is None else t_cutoff,
+        interpolate=interpolate,
+        count_width=count_width,
     )
     if max_spikes is not None:
         sp = detect(max_spikes=max_spikes)
@@ -607,6 +637,70 @@ def detect_spikes(
     return _pad(sp, size) if n < size else sp
 
 
+def _crossing(s: Array, k: Array, level: Array) -> Array:
+    """Where ``s`` crosses ``level`` between samples ``k`` and ``k + 1``, as a
+    fraction of the interval (linear interpolation, clipped to [0, 1]); 0 where
+    undefined. Undefined inputs are replaced before dividing, so that gradients
+    stay finite."""
+    s0, s1 = take(s, k), take(s, k + 1)
+    ok = (k >= 0) & jnp.isfinite(s0) & jnp.isfinite(s1) & jnp.isfinite(level)
+    ok = ok & (s0 != s1)
+    s0, s1 = jnp.where(ok, s0, 0.0), jnp.where(ok, s1, 1.0)
+    frac = (jnp.where(ok, level, 0.0) - s0) / (s1 - s0)
+    return jnp.where(ok, jnp.clip(frac, 0.0, 1.0), 0.0)
+
+
+def _vertex(s: Array, k: Array) -> Array:
+    """Offset (samples, clipped to +-0.5) of the vertex of the parabola through
+    ``s[k - 1]``, ``s[k]`` and ``s[k + 1]``, i.e. of the extremum at ``k``
+    between samples; 0 where undefined."""
+    a, b, c = take(s, k - 1), take(s, k), take(s, k + 1)
+    curvature = a - 2.0 * b + c
+    ok = (k >= 1) & jnp.isfinite(curvature) & (curvature != 0)
+    a, c = jnp.where(ok, a, 0.0), jnp.where(ok, c, 0.0)
+    offset = 0.5 * (a - c) / jnp.where(ok, curvature, 1.0)
+    return jnp.where(ok, jnp.clip(offset, -0.5, 0.5), 0.0)
+
+
+def _event_time(sp: Spikes, k: Array, offset: Array) -> Array:
+    """``t[k]`` moved by ``offset`` samples: in value with ``sp.interpolate``,
+    otherwise only in the gradient (the value stays Allen's ``t[k]``)."""
+    dt = take(sp.t, k + 1) - take(sp.t, k)
+    dt = jnp.where(jnp.isfinite(dt), dt, 0.0)
+    if not sp.interpolate:
+        offset = offset - lax.stop_gradient(offset)
+    return take(sp.t, k) + dt * offset
+
+
+def _spike_times(sp: Spikes, event: str) -> Array:
+    """``[K]`` times (s) of one event of every spike: ``"threshold"``,
+    ``"peak"``, ``"trough"``, ``"upstroke"``, ``"downstroke"``, ``"fast_trough"``,
+    ``"adp"`` or ``"slow_trough"``; NaN where missing.
+
+    The values are Allen's sample times, or with ``sp.interpolate`` the times
+    between samples: where dV/dt crosses the threshold level (``thresh_frac``
+    times the mean upstroke) or the fast-trough level (1% of the downstroke), and
+    the vertex of a parabola through the extremum for the others (of dV/dt for
+    up- and downstrokes, of ``v`` otherwise; for the afterdepolarization this
+    approximates its definition on the 1 kHz dV/dt). Either way the gradients are
+    those of the times between samples.
+    """
+    k = getattr(sp, event)
+    if event == "threshold":
+        level = _upstroke_target(sp.dvdt, sp.upstroke, sp.thresh_frac)
+        offset = _crossing(sp.dvdt, k, level)
+    elif event == "fast_trough":
+        level = 0.01 * take(sp.dvdt, sp.downstroke)
+        offset = _crossing(sp.dvdt, k - 1, level) - 1.0
+    elif event in ("upstroke", "downstroke"):
+        offset = _vertex(sp.dvdt, k)
+    elif event in ("peak", "trough", "adp", "slow_trough"):
+        offset = _vertex(sp.v, k)
+    else:
+        raise ValueError(f"unknown spike event {event!r}")
+    return _event_time(sp, k, offset)
+
+
 def _widths(sp: Spikes) -> Array:
     """Width at half height (``find_widths``, using the fast trough), in s."""
     size, num = sp.v.shape[0], sp.threshold.shape[0]
@@ -621,13 +715,16 @@ def _widths(sp: Spikes) -> Array:
     fall = segments(jnp.where(use, sp.peak, -1), sp.fast_trough, size)
     right = segment_first(sp.v <= jnp.append(level, jnp.nan)[fall], fall, num)
     ok = (left >= 0) & (right >= 0)
-    return jnp.where(ok, take(sp.t, right) - take(sp.t, left), jnp.nan)
+    # Times of the half-height crossings, between samples (see _spike_times).
+    t_left = _event_time(sp, left, _crossing(sp.v, left, level))
+    t_right = _event_time(sp, right, _crossing(sp.v, right - 1, level) - 1.0)
+    return jnp.where(ok, t_right - t_left, jnp.nan)
 
 
 def _point_features(sp: Spikes, name: str, idx: Array) -> dict[str, Array]:
     out = {
         f"{name}_index": idx,
-        f"{name}_t": take(sp.t, idx),
+        f"{name}_t": _spike_times(sp, name),
         f"{name}_v": take(sp.v, idx),
     }
     if sp.i is not None:
@@ -635,7 +732,7 @@ def _point_features(sp: Spikes, name: str, idx: Array) -> dict[str, Array]:
     return out
 
 
-def spike_features(sp: Spikes) -> dict[str, Array]:
+def spike_features(sp: Spikes, *, nan_to: float | None = None) -> dict[str, Array]:
     """The columns of Allen's spike table, as ``[K]`` arrays.
 
     ``*_index`` are sample indices (-1 where undefined), ``*_t`` times (s),
@@ -643,12 +740,16 @@ def spike_features(sp: Spikes) -> dict[str, Array]:
     ``upstroke``/``downstroke`` dV/dt (V/s), ``width`` the width at half height
     (s); undefined values are NaN. ``clipped`` is boolean, ``isi_type`` uses
     ``ISI_DIRECT``, ``ISI_DETOUR`` and ``ISI_MISSING``.
+
+    ``nan_to`` replaces NaN values by the given value, e.g. ``0.0`` in a loss for
+    gradient-based fitting, where a NaN would make all gradients NaN; ``None``
+    (the default) keeps NaN.
     """
-    return _spike_features(_analysed(sp))
+    return _spike_features(_analysed(sp), nan_to)
 
 
-@jax.jit
-def _spike_features(sp: Spikes) -> dict[str, Array]:
+@partial(jax.jit, static_argnames=("nan_to",))
+def _spike_features(sp: Spikes, nan_to: float | None) -> dict[str, Array]:
     out = {"threshold_index": sp.threshold, "clipped": sp.clipped}
     for name, idx in (
         ("threshold", sp.threshold),
@@ -659,11 +760,15 @@ def _spike_features(sp: Spikes) -> dict[str, Array]:
     for name, idx in (("upstroke", sp.upstroke), ("downstroke", sp.downstroke)):
         out[f"{name}_index"] = idx
         out[name] = take(sp.dvdt, idx)
-        out[f"{name}_t"] = take(sp.t, idx)
+        out[f"{name}_t"] = _spike_times(sp, name)
         out[f"{name}_v"] = take(sp.v, idx)
     out["isi_type"] = sp.isi_type
     for name in ("fast_trough", "adp", "slow_trough"):
         out |= _point_features(sp, name, getattr(sp, name))
     out["width"] = _widths(sp)
-    out["upstroke_downstroke_ratio"] = out["upstroke"] / -out["downstroke"]
-    return out
+    # NaN unless both are defined; dividing only then keeps gradients finite.
+    up, down = out["upstroke"], out["downstroke"]
+    both = jnp.isfinite(up) & jnp.isfinite(down)
+    ratio = jnp.where(both, up, 1.0) / -jnp.where(both, down, -1.0)
+    out["upstroke_downstroke_ratio"] = jnp.where(both, ratio, jnp.nan)
+    return fill_nan(out, nan_to)

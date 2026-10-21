@@ -1,10 +1,7 @@
 # jaxley-ephys
 
-`jaxley-ephys` computes electrophysiological features of voltage recordings in
-JAX: spike detection and spike, sweep, sweepset and cell features that match the
-AllenSDK feature extraction. It is fast (a whole cell of the Allen Cell Types
-Database takes about 2 s on a CPU, 2.5x faster than the AllenSDK code), compiled
-and batches with `jax.vmap`.
+`jaxley-ephys` provides differentiable implementations of the AllenSDK ephys features
+in JAX.
 
 Documentation: <https://jaxley-ephys.readthedocs.io>
 
@@ -34,14 +31,26 @@ cell = extract_cell_features(long_squares, short_squares, ramps)
 cell["cell"]["ri"]  # cell features are named like in the Allen Cell Types Database
 ```
 
-Parameter names, defaults and units follow the AllenSDK. The notebooks in
-`examples/` walk through spikes, sweep, sweepset and cell features, and batches.
+Every feature can be differentiated, e.g. to fit a model to a recording:
+
+```python
+def loss(v):
+    sp = detect_spikes(t, v, i, start=1.02, end=2.02, interpolate=True)  # smooth event times
+    features = sweep_features(sp, nan_to=0.0)  # NaN (undefined) would make gradients NaN
+    return (features["mean_isi"] - 50.0) ** 2  # target: a mean interspike interval of 50 ms
+
+grad = jax.grad(loss)(v)  # [T]; through a differentiable simulator, w.r.t. its parameters
+```
+
+`examples/06_fitting.ipynb` fits a Hodgkin-Huxley model to features this way.
+
+Parameter names, defaults and units (with exceptions) follow the AllenSDK. 
+The notebooks in `examples/` walk you through the library and how to use it.
 
 ## Allen parity
 
-The AllenSDK feature extraction is no longer maintained. This repository contains
-a maintained copy, `allen_ephys`, fixed for current NumPy, SciPy and pandas, with
-its original license (install with
+This repository also contains a maintained and working copy of `allen_ephys`, with its 
+original license (install with
 `pip install "jaxley-ephys[allen] @ git+https://github.com/jaxleyverse/jaxley-ephys"`).
 `jaxley-ephys` matches it on every sweep of eight cells of the Allen Cell Types
 Database; the few intended differences are listed in
