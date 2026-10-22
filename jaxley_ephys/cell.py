@@ -33,7 +33,8 @@ from .sweepset import (
 LONG_SQUARE_WINDOW = (1.02, 2.02)
 RAMP_START = 1.02
 # First-spike features of the database (with suffixes _long_square, _short_square
-# and _ramp); threshold_i_long_square is the rheobase.
+# and _ramp); threshold_i_long_square is the rheobase, threshold_i_short_square the
+# common short-square amplitude.
 SPIKE_FEATURES = (
     "fast_trough_t",
     "fast_trough_v",
@@ -72,6 +73,11 @@ def cell_features(
     - first-spike features: ``<feature>_long_square`` from the rheobase sweep
       (``threshold_i_long_square`` is the rheobase), ``<feature>_short_square``
       and ``<feature>_ramp`` averaged over sweeps (``mean_spike_0``).
+      ``threshold_i_short_square`` is the common short-square amplitude
+      (``stimulus_amplitude``), as in Allen's current pipeline (ipfx) and most of
+      the database; the mean current at threshold is 0 or that amplitude per
+      sweep, as the spikes start at the end of the pulse, and remains in
+      ``mean_spike_0``.
 
     The database's sweep ids (``rheobase_sweep_id``, ``thumbnail_sweep_id``)
     correspond to ``rheobase_index`` and ``hero_index`` of the long squares.
@@ -100,6 +106,8 @@ def cell_features(
         means = {} if features is None else features["mean_spike_0"]
         for name in SPIKE_FEATURES:
             out[f"{name}_{suffix}"] = means.get(name, nan)
+    if short_squares is not None:
+        out["threshold_i_short_square"] = short_squares["stimulus_amplitude"]
     return fill_nan(out, nan_to)
 
 

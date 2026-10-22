@@ -32,7 +32,7 @@ from tests.utils.allen_dataset import load_specimen_case
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REFERENCE_DIR = REPO_ROOT / "tests" / "testdata" / "allen_reference"
 # Bump when the contents of the reference files change.
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 KINDS = ("long_square", "short_square", "ramp")
 SWEEP_FEATURES = (
     "adapt",
@@ -278,6 +278,8 @@ def _db_record(long_record, rheobase, hero, short_record, ramp_record) -> dict:
         record[f"{name}_short_square"] = short_record["mean_spike_0"][name]
         record[f"{name}_ramp"] = ramp_record["mean_spike_0"][name]
     record["threshold_i_long_square"] = long_record["rheobase_i"]
+    # As in Allen's current pipeline (ipfx); see ALLEN_EPHYS_FIXES.md, section 4.
+    record["threshold_i_short_square"] = short_record["stimulus_amplitude"]
     return record
 
 

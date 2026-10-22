@@ -65,6 +65,21 @@ FEATURE_TOLERANCES = {
     "rheobase_sweep_id": (0.0, 0.0),
 }
 
+# The choice of the rheobase sweep is compared on its own
+# (test_rheobase_sweep_against_allen_db).
+RHEOBASE_SWEEP_FEATURES = ("rheobase_sweep_number", "rheobase_sweep_id")
+
+# On 605889373, five spiking long squares share the minimal amplitude (280 pA): the DB
+# picks sweep 53, the vendored tie-break (highest rate) sweep 57. No tie-break matches
+# the DB on all cached specimens with ties (first sweep, highest rate, ipfx's unstable
+# sort by amplitude), and excluding sweeps (e.g. by QC) would change the DB's f-I
+# slope, so the DB's choice cannot be reproduced from the cached data.
+RHEOBASE_SWEEP_MISMATCHES = {605889373}
+
+# Specimens whose DB row holds the older threshold_i_short_square
+# (see _short_square_threshold_i).
+MEAN_THRESHOLD_I_SPECIMENS = {469801138, 485909730}
+
 
 _INDEX_SPIKE_COUNT_CACHE: dict[tuple[int, int], int] = {}
 
@@ -173,34 +188,44 @@ def _first_spike_feature(sweep_dict: dict, feature_name: str) -> float:
     return _as_float_or_nan(spikes[0].get(feature_name))
 
 
-def _short_square_threshold_i(short_squares: dict) -> float:
-    sweeps = short_squares.get("common_amp_sweeps") or []
-    stim_amp = _as_float_or_nan(short_squares.get("stimulus_amplitude"))
+def _db_short_square_sweeps(specimen_case, short_squares: dict) -> list[dict]:
+    """The common-amplitude short squares that the DB's first-spike means average over.
 
-    values = []
-    for sweep in sweeps:
-        spikes = sweep.get("spikes") or []
-        if not spikes:
-            continue
-        value = _as_float_or_nan(spikes[0].get("threshold_i"))
-        if math.isnan(value):
-            continue
-        values.append(value)
-
-    if not values:
-        return stim_amp
-
-    if len(sweeps) <= 2:
-        return float(np.mean(values))
-
-    nonzero = [value for value in values if not np.isclose(value, 0.0)]
-    if nonzero:
-        return float(np.mean(nonzero))
-
-    return stim_amp
+    The DB leaves out the sweeps of the coarse search protocol (C1SSCOARSE...): on
+    565871768, sweep 15 has the common amplitude and a normal spike, but is not part
+    of the DB means. Only the fine-protocol sweeps (C1SSFINEST...) match the DB on all
+    cached specimens.
+    """
+    descriptions = {
+        str(record.sweep_number): record.stimulus_description
+        for record in specimen_case.sweep_records
+    }
+    return [
+        sweep
+        for sweep in short_squares.get("common_amp_sweeps") or []
+        if "FINEST" in descriptions.get(str(sweep.get("id")), "")
+    ]
 
 
-def _lookup_spiking_sweep_by_db_sweep_id(specimen_case, sweeps: list[dict], db_sweep_id: int):
+def _short_square_threshold_i(
+    specimen_case, short_squares: dict, sweeps: list[dict]
+) -> float:
+    """The DB's threshold_i_short_square.
+
+    Allen's current pipeline (ipfx, ``feature_record.build_cell_feature_record``) stores
+    the common stimulus amplitude. The DB rows of the two oldest cached specimens (NWB
+    files from 2016, the others from 2017-2018) hold the older value, the mean
+    first-spike threshold_i. Per sweep, that is 0 or the amplitude, as short-square
+    spikes start at the end of the 3 ms pulse.
+    """
+    if specimen_case.specimen_id in MEAN_THRESHOLD_I_SPECIMENS:
+        return _mean_first_spike_feature(sweeps, "threshold_i")
+    return _as_float_or_nan(short_squares.get("stimulus_amplitude"))
+
+
+def _lookup_spiking_sweep_by_db_sweep_id(
+    specimen_case, sweeps: list[dict], db_sweep_id: int
+):
     for sweep in sweeps:
         sweep_number_raw = sweep.get("id")
         if sweep_number_raw is None:
@@ -214,6 +239,17 @@ def _lookup_spiking_sweep_by_db_sweep_id(specimen_case, sweeps: list[dict], db_s
     return None
 
 
+def _db_spiking_sweep(
+    specimen_case, sweeps: list[dict], db_sweep_id, fallback: dict
+) -> dict:
+    """The sweep with the DB sweep id ``db_sweep_id``, or ``fallback`` if there is none."""
+    sweep_id = _as_float_or_nan(db_sweep_id)
+    if math.isnan(sweep_id):
+        return fallback
+    sweep = _lookup_spiking_sweep_by_db_sweep_id(specimen_case, sweeps, int(sweep_id))
+    return fallback if sweep is None else sweep
+
+
 def _computed_cell_feature_dict(specimen_case) -> dict[str, float]:
     """Return computed feature map from vendored Allen extractor outputs."""
     features = specimen_case.compute_cell_features()
@@ -224,17 +260,23 @@ def _computed_cell_feature_dict(specimen_case) -> dict[str, float]:
 
     rheobase_sweep = long_squares.get("rheobase_sweep") or {}
     long_spiking_sweeps = long_squares.get("spiking_sweeps") or []
+    short_square_sweeps = _db_short_square_sweeps(specimen_case, short_squares)
 
-    thumbnail_sweep = None
-    thumbnail_sweep_id = _as_float_or_nan(feature_row.get("thumbnail_sweep_id"))
-    if not math.isnan(thumbnail_sweep_id):
-        thumbnail_sweep = _lookup_spiking_sweep_by_db_sweep_id(
-            specimen_case,
-            long_spiking_sweeps,
-            int(thumbnail_sweep_id),
-        )
-    if thumbnail_sweep is None:
-        thumbnail_sweep = rheobase_sweep
+    thumbnail_sweep = _db_spiking_sweep(
+        specimen_case,
+        long_spiking_sweeps,
+        feature_row.get("thumbnail_sweep_id"),
+        rheobase_sweep,
+    )
+    # The first-spike features are compared on the DB's rheobase sweep, as its choice
+    # among sweeps of equal amplitude cannot always be reproduced (see
+    # RHEOBASE_SWEEP_MISMATCHES).
+    db_rheobase_sweep = _db_spiking_sweep(
+        specimen_case,
+        long_spiking_sweeps,
+        feature_row.get("rheobase_sweep_id"),
+        rheobase_sweep,
+    )
 
     rheobase_sweep_number = _as_float_or_nan(rheobase_sweep.get("id"))
     rheobase_sweep_id = float("nan")
@@ -258,7 +300,6 @@ def _computed_cell_feature_dict(specimen_case) -> dict[str, float]:
         "vm_for_sag": _as_float_or_nan(long_squares.get("vm_for_sag")),
         "vrest": _as_float_or_nan(long_squares.get("v_baseline")),
         "threshold_i_long_square": _as_float_or_nan(long_squares.get("rheobase_i")),
-        "threshold_i_short_square": _short_square_threshold_i(short_squares),
         "threshold_i_ramp": _mean_first_spike_feature(
             ramps.get("spiking_sweeps") or [],
             "threshold_i",
@@ -268,7 +309,7 @@ def _computed_cell_feature_dict(specimen_case) -> dict[str, float]:
     for feature_name in SPIKE_FEATURE_NAMES:
         if feature_name == "threshold_i":
             out[f"{feature_name}_short_square"] = _short_square_threshold_i(
-                short_squares
+                specimen_case, short_squares, short_square_sweeps
             )
             out[f"{feature_name}_ramp"] = _mean_first_spike_feature(
                 ramps.get("spiking_sweeps") or [],
@@ -276,18 +317,20 @@ def _computed_cell_feature_dict(specimen_case) -> dict[str, float]:
             )
             continue
 
-        long_value = _first_spike_feature(rheobase_sweep, feature_name)
+        long_value = _first_spike_feature(db_rheobase_sweep, feature_name)
         out[f"{feature_name}_long_square"] = long_value
 
         if feature_name in {"slow_trough_t", "slow_trough_v"}:
-            out[f"{feature_name}_short_square"] = _mean_first_spike_feature_with_fallback(
-                short_squares.get("common_amp_sweeps") or [],
-                feature_name,
-                fallback_feature_name=feature_name.replace("slow_", ""),
+            out[f"{feature_name}_short_square"] = (
+                _mean_first_spike_feature_with_fallback(
+                    short_square_sweeps,
+                    feature_name,
+                    fallback_feature_name=feature_name.replace("slow_", ""),
+                )
             )
         else:
             out[f"{feature_name}_short_square"] = _mean_first_spike_feature(
-                short_squares.get("common_amp_sweeps") or [],
+                short_square_sweeps,
                 feature_name,
             )
 
@@ -368,6 +411,8 @@ def test_cell_feature_parity_against_allen_db(specimen_case) -> None:
     extracted_feature_values = _computed_cell_feature_dict(specimen_case)
 
     for feature_name in sorted(db_feature_values):
+        if feature_name in RHEOBASE_SWEEP_FEATURES:
+            continue  # test_rheobase_sweep_against_allen_db
         assert feature_name in extracted_feature_values, (
             f"specimen={specimen_case.specimen_id} feature={feature_name} "
             "not produced by computed cell feature mapping"
@@ -388,6 +433,33 @@ def test_cell_feature_parity_against_allen_db(specimen_case) -> None:
             feature_name,
             db_value,
             extracted_value,
+            atol=atol,
+            rtol=rtol,
+        )
+
+
+def test_rheobase_sweep_against_allen_db(specimen_case, request) -> None:
+    if specimen_case.specimen_id in RHEOBASE_SWEEP_MISMATCHES:
+        request.applymarker(
+            pytest.mark.xfail(
+                reason="the DB's choice among rheobase sweeps of equal amplitude "
+                "cannot be reproduced (see RHEOBASE_SWEEP_MISMATCHES)",
+                strict=True,
+            )
+        )
+    db_feature_values = _expected_cell_feature_dict(specimen_case)
+    extracted_feature_values = _computed_cell_feature_dict(specimen_case)
+
+    for feature_name in RHEOBASE_SWEEP_FEATURES:
+        db_value = db_feature_values[feature_name]
+        if math.isnan(db_value):
+            continue
+        atol, rtol = _feature_tolerance(feature_name)
+        _assert_close(
+            specimen_case.specimen_id,
+            feature_name,
+            db_value,
+            extracted_feature_values[feature_name],
             atol=atol,
             rtol=rtol,
         )

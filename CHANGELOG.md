@@ -17,7 +17,8 @@ First release.
   constants where Allen's optimizer stays at its start.
 - Sweepset features of long squares, short squares and ramps, and cell features
   named like the Allen Cell Types Database (`cell_features`,
-  `extract_cell_features`).
+  `extract_cell_features`); `threshold_i_short_square` is the short-square
+  stimulus amplitude, as in Allen's current pipeline (ipfx).
 - Parity with the AllenSDK feature extraction (the maintained copy `allen_ephys`)
   on every sweep of eight Allen cells; differences are documented in
   `allen_ephys/ALLEN_EPHYS_FIXES.md`.

@@ -20,8 +20,10 @@ Changes relative to original AllenSDK implementation.
     matches the DB on 7 of the 8 cached specimens; on 605889373 the DB picks
     the first minimal-amplitude sweep (53) instead of the highest-rate one (57),
     and the upstream rule (first minimal-amplitude sweep) fails on 469801138
-    and 537256313, so the DB choice likely depends on information not in the
-    cached data (e.g. QC exclusions)
+    and 537256313. ipfx's rule (an unstable sort by amplitude) does not
+    reproduce the DB either, and excluding sweeps (e.g. by QC) would change the
+    DB's f-I slope, so the DB's choice cannot be reproduced from the cached data
+    (`tests/allen_ephys/test_parity.py` expects this failure; 2026-10-21)
   - `membrane_time_constant`: avoid `np.nanmean` all-NaN warning by averaging
     only finite `tau` values and returning `nan` when none are finite
 - `allen_ephys/ephys_features.py`
@@ -68,15 +70,25 @@ Changes relative to original AllenSDK implementation.
     smallest-amplitude spiking long square in (rheobase + 39, rheobase + 61)
     pA) on all cached specimens
   - long-square first-spike timing/voltage fields are mapped from the first
-    spike of `rheobase_sweep`; `threshold_i_long_square` is mapped to
-    `rheobase_i`
+    spike of the DB's rheobase sweep (`rheobase_sweep_id`), as its choice among
+    sweeps of equal amplitude cannot always be reproduced (section 2); the
+    choice itself is compared separately and expected to fail on 605889373;
+    `threshold_i_long_square` is mapped to `rheobase_i`
   - extractor `long_squares.input_resistance` is mapped to DB `ri`
     (Allen DB `input_resistance_mohm` is not a direct output of
     `EphysCellFeatureExtractor`)
-  - `threshold_i_short_square` uses a DB-aligned aggregation of the first-spike
-    `threshold_i` over the common-amplitude short-square sweeps: the mean for
-    small sets (<= 2 sweeps), otherwise the mean of the nonzero values, falling
-    back to the common stimulus amplitude when no value is available
+  - short-square first-spike features are averaged over the common-amplitude
+    sweeps of the fine protocol (`C1SSFINEST`): on 565871768 the DB leaves out
+    a sweep of the coarse search (`C1SSCOARSE`) at the common amplitude. Allen's
+    code (`extract_cell_features`, and ipfx) averages over all short squares
+    with spikes, which matches none of the cached specimens (2026-10-21)
+  - `threshold_i_short_square` is the common stimulus amplitude, as stored by
+    Allen's current pipeline (ipfx, `feature_record.build_cell_feature_record`)
+    and returned by jaxley_ephys (section 5). The DB rows of the two oldest
+    cached specimens (469801138, 485909730; NWB files from 2016) hold the older
+    value, the mean first-spike `threshold_i`, which is 0 or the amplitude per
+    sweep, as short-square spikes start at the end of the 3 ms pulse
+    (2026-10-21)
   - short-square `slow_trough_t/v` use first-spike `slow_trough_t/v` with
     fallback to `trough_t/v` when slow-trough values are not present
   - sweep-level `num_spikes` parity uses NWB `index_range` windows to align
@@ -84,7 +96,8 @@ Changes relative to original AllenSDK implementation.
   - sweep-level `peak_deflect` parity compares value and index separately
     (`peak_deflect`, `peak_deflect_index`)
 - These DB-matching heuristics are not part of Allen's code; they stay in the
-  DB comparison tests and are not reproduced by jaxley_ephys.
+  DB comparison tests and are not reproduced by jaxley_ephys, apart from the
+  current definition of `threshold_i_short_square`.
 
 ## 5) Reference outputs for the jaxley_ephys parity tests
 - `tests/utils/allen_reference.py` (run via `tests/build_reference.py`) runs
@@ -102,10 +115,14 @@ Changes relative to original AllenSDK implementation.
     delay is not meaningful (section 6) and its fit is slow (seconds per ramp)
   - cell level: the `EphysCellFeatureExtractor` outputs, the hero sweep, the
     long-square baseline (`extract_cell_features` overrides the extractor's
-    `nanmean` with a plain mean over all long squares) and first-spike means of
-    `extract_cell_features`, the adjusted short-square detection parameters, and
-    these values under their Allen DB names (`record`, without the DB-matching
-    heuristics of section 4)
+    `nanmean` with a plain mean over all long squares) and first-spike means as
+    in `extract_cell_features`, but for short squares over the common-amplitude
+    sweeps (closer to the DB, section 4), the adjusted short-square detection
+    parameters, and these values under their Allen DB names (`record`, without
+    the DB-matching heuristics of section 4). Like ipfx, the record's
+    `threshold_i_short_square` is the common short-square amplitude, not the
+    mean first-spike `threshold_i`, which is 0 or that amplitude per sweep
+    (2026-10-22)
 - Only canonical stimuli are used: `Long Square`, `Ramp`, `Short Square`
   (`tests/utils/allen_dataset.py` skips variants such as `Ramp to Rheobase`
   and `Short Square - Triple` when reading `ephys_sweeps.json`).

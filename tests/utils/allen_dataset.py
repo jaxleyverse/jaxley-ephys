@@ -65,6 +65,7 @@ class SweepRecord:
     sweep_number: int
     sweep_id: int
     stimulus_name: str
+    stimulus_description: str
     stimulus_start_time: float | None
     stimulus_duration: float | None
     stimulus_absolute_amplitude: float | None
@@ -219,7 +220,9 @@ class SpecimenCase:
         return self._cell_features_cache
 
 
-def cached_specimen_ids(data_root: Path = Path("tests/testdata/allen_cache")) -> list[int]:
+def cached_specimen_ids(
+    data_root: Path = Path("tests/testdata/allen_cache"),
+) -> list[int]:
     discovered = []
     for path in sorted(data_root.glob("specimen_*")):
         if not path.is_dir():
@@ -274,6 +277,7 @@ def _load_sweep_records(specimen_id: int, data_root: Path) -> list[SweepRecord]:
                 sweep_number=sweep_number,
                 sweep_id=sweep_id,
                 stimulus_name=stimulus_name,
+                stimulus_description=str(row.get("stimulus_description") or ""),
                 stimulus_start_time=_safe_float(row.get("stimulus_start_time")),
                 stimulus_duration=_safe_float(row.get("stimulus_duration")),
                 stimulus_absolute_amplitude=_safe_float(
